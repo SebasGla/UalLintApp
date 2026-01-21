@@ -1,0 +1,45 @@
+plugins
+        {
+            id 'java'
+            id 'application'
+            id 'org.openjfx.javafxplugin' version '0.0.14'
+        }
+
+repositories
+        {
+            mavenCentral()
+        }
+
+java
+        {
+            toolchain
+                    {
+                        languageVersion = JavaLanguageVersion.of(25)
+                    }
+        }
+
+javafx
+        {
+            version = "25"
+            modules =
+                    [
+                            'javafx.controls',
+                            'javafx.fxml'
+                    ]
+        }
+
+application
+        {
+            mainClass = 'app.MainGui'
+        }
+
+dependencies
+        {
+            implementation 'org.antlr:antlr4-runtime:4.13.2'
+            testImplementation 'org.junit.jupiter:junit-jupiter:5.10.3'
+        }
+
+tasks.test
+        {
+            useJUnitPlatform()
+        }
