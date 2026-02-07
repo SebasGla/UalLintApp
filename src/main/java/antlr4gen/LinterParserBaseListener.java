@@ -55,25 +55,49 @@ public class LinterParserBaseListener implements LinterParserListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterRoutineWithThumbFunc(LinterParser.RoutineWithThumbFuncContext ctx) { }
+	@Override public void enterRoutine(LinterParser.RoutineContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitRoutineWithThumbFunc(LinterParser.RoutineWithThumbFuncContext ctx) { }
+	@Override public void exitRoutine(LinterParser.RoutineContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterRoutineBody(LinterParser.RoutineBodyContext ctx) { }
+	@Override public void enterRoutinePopThenBx(LinterParser.RoutinePopThenBxContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitRoutineBody(LinterParser.RoutineBodyContext ctx) { }
+	@Override public void exitRoutinePopThenBx(LinterParser.RoutinePopThenBxContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterRoutinePopOnly(LinterParser.RoutinePopOnlyContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitRoutinePopOnly(LinterParser.RoutinePopOnlyContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterRoutineBxOnly(LinterParser.RoutineBxOnlyContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitRoutineBxOnly(LinterParser.RoutineBxOnlyContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *

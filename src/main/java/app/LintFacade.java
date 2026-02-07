@@ -2,6 +2,7 @@ package app;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public final class LintFacade
 {
@@ -9,9 +10,9 @@ public final class LintFacade
     {
     }
 
-    public static List<DiagnosticRow> run(String sourceText, String sourceName)
+    public static List<DiagnosticRow> run(String sourceText, String sourceName, Map<Long, String> addrToName)
     {
-        DiagnosticCollector dc = LinterRunner.run(sourceText, sourceName);
+        DiagnosticCollector dc = LinterRunner.run(sourceText, sourceName, addrToName);
 
         List<DiagnosticRow> rows = new ArrayList<>();
 

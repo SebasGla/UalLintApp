@@ -40,27 +40,51 @@ public interface LinterParserListener extends ParseTreeListener {
 	 */
 	void exitInstruction(LinterParser.InstructionContext ctx);
 	/**
-	 * Enter a parse tree produced by the {@code RoutineWithThumbFunc}
-	 * labeled alternative in {@link LinterParser#routine}.
+	 * Enter a parse tree produced by {@link LinterParser#routine}.
 	 * @param ctx the parse tree
 	 */
-	void enterRoutineWithThumbFunc(LinterParser.RoutineWithThumbFuncContext ctx);
+	void enterRoutine(LinterParser.RoutineContext ctx);
 	/**
-	 * Exit a parse tree produced by the {@code RoutineWithThumbFunc}
-	 * labeled alternative in {@link LinterParser#routine}.
+	 * Exit a parse tree produced by {@link LinterParser#routine}.
 	 * @param ctx the parse tree
 	 */
-	void exitRoutineWithThumbFunc(LinterParser.RoutineWithThumbFuncContext ctx);
+	void exitRoutine(LinterParser.RoutineContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link LinterParser#routineBody}.
+	 * Enter a parse tree produced by the {@code RoutinePopThenBx}
+	 * labeled alternative in {@link LinterParser#routineBody}.
 	 * @param ctx the parse tree
 	 */
-	void enterRoutineBody(LinterParser.RoutineBodyContext ctx);
+	void enterRoutinePopThenBx(LinterParser.RoutinePopThenBxContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link LinterParser#routineBody}.
+	 * Exit a parse tree produced by the {@code RoutinePopThenBx}
+	 * labeled alternative in {@link LinterParser#routineBody}.
 	 * @param ctx the parse tree
 	 */
-	void exitRoutineBody(LinterParser.RoutineBodyContext ctx);
+	void exitRoutinePopThenBx(LinterParser.RoutinePopThenBxContext ctx);
+	/**
+	 * Enter a parse tree produced by the {@code RoutinePopOnly}
+	 * labeled alternative in {@link LinterParser#routineBody}.
+	 * @param ctx the parse tree
+	 */
+	void enterRoutinePopOnly(LinterParser.RoutinePopOnlyContext ctx);
+	/**
+	 * Exit a parse tree produced by the {@code RoutinePopOnly}
+	 * labeled alternative in {@link LinterParser#routineBody}.
+	 * @param ctx the parse tree
+	 */
+	void exitRoutinePopOnly(LinterParser.RoutinePopOnlyContext ctx);
+	/**
+	 * Enter a parse tree produced by the {@code RoutineBxOnly}
+	 * labeled alternative in {@link LinterParser#routineBody}.
+	 * @param ctx the parse tree
+	 */
+	void enterRoutineBxOnly(LinterParser.RoutineBxOnlyContext ctx);
+	/**
+	 * Exit a parse tree produced by the {@code RoutineBxOnly}
+	 * labeled alternative in {@link LinterParser#routineBody}.
+	 * @param ctx the parse tree
+	 */
+	void exitRoutineBxOnly(LinterParser.RoutineBxOnlyContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link LinterParser#routineBlock}.
 	 * @param ctx the parse tree

@@ -92,18 +92,18 @@ instruction:  arithmeticInstr
             ;
 
 routine
-    : THUMBFUNC labelDef routineBody   #RoutineWithThumbFunc
-    ;
+    : THUMBFUNC labelDef routineBody;
 
 routineBody
-    : (push routineBlock? pop)
-    | (routineBlock? routineBX)
+    :push routineBlock? pop routineBX                      #RoutinePopThenBx
+    | push routineBlock? pop                                #RoutinePopOnly
+    | routineBlock? routineBX                              #RoutineBxOnly
     ;
 
 routineBlock: (instruction |  labelDef instruction? | conditionalBlock)+;
 push: PUSH LBRACKET regList RBRACKET;
 pop: POP LBRACKET regList RBRACKET;
-routineBX: BRANCHX register;
+routineBX: BRANCHX (LINKREGISTER);
 
 regList: regElem (COMMA regElem)*;
 regElem: register (MINUS register)?;

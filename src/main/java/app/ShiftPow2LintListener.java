@@ -23,7 +23,7 @@ import java.util.Map;
  */
 public final class ShiftPow2LintListener extends LinterParserBaseListener
 {
-    private static final int CONST_TTL = 6;
+    private static final int CONST_TTL = 2;
 
     private final DiagnosticCollector diags;
     private final Map<String, ConstBinding> constRegs = new HashMap<>();

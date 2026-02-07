@@ -33,13 +33,48 @@ application
             mainClass = 'app.MainGui'
         }
 
+
 dependencies
         {
             implementation 'org.antlr:antlr4-runtime:4.13.2'
             testImplementation 'org.junit.jupiter:junit-jupiter:5.10.3'
+
+            // Debug / GUI support (Trees.inspect)
+            implementation 'org.antlr:antlr4:4.13.2'
+        }
+dependencies
+        {
+            implementation 'org.fxmisc.richtext:richtextfx:0.11.7'
         }
 
 tasks.test
         {
             useJUnitPlatform()
         }
+
+tasks.register('prepareJpackage')
+        {
+            dependsOn tasks.named('jar')
+
+            doLast
+                    {
+                        def jarTask = tasks.named('jar').get()
+                        def outDir = file("$buildDir/jpackage-input")
+
+                        outDir.mkdirs()
+
+                        copy
+                                {
+                                    from jarTask.archiveFile.get().asFile
+                                    into outDir
+                                }
+
+                        copy
+                                {
+                                    from configurations.runtimeClasspath
+                                    into outDir
+                                }
+                    }
+        }
+
+
