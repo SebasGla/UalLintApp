@@ -1,0 +1,53 @@
+name: Build Native Apps
+
+# Wann soll gebaut werden? Bei jedem Push auf 'main' oder manuell per Button.
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: 
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    # Hier definieren wir die Betriebssysteme
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25' # Hier kannst du deine gewünschte JDK-Version eintragen
+        distribution: 'temurin' # Ein gängiges, kostenloses OpenJDK
+
+    - name: Make gradlew executable (Linux only)
+      if: runner.os == 'Linux'
+      run: chmod +x ./gradlew
+
+    - name: Build and Prepare JPackage Input
+      run: ./gradlew clean prepareJpackage
+      shell: bash
+
+    - name: Run jpackage
+      # actions/setup-java packt jpackage automatisch in den Pfad!
+      run: >
+        jpackage 
+        --type app-image 
+        --name UalLintApp 
+        --dest build/dist 
+        --input build/jpackage-input 
+        --main-jar UalLintApp.jar 
+        --main-class app.MainGui
+      shell: bash
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: UalLintApp-${{ runner.os }}
+        path: build/dist/
