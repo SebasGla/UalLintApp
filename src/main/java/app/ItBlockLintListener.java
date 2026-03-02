@@ -6,7 +6,7 @@ import antlr4gen.*;
 public final class ItBlockLintListener extends LinterParserBaseListener
 {
 
-    private static final Rules ruleId = Rules.ITCOND;
+    private static final Rules ruleId = Rules.ItBlock;
 
     private final DiagnosticCollector diags;
 

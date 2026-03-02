@@ -10,7 +10,7 @@ import java.util.List;
 public final class NoCondReturnsLintListener extends LinterParserBaseListener
 {
 
-    private static final Rules ruleId = Rules.CONDRETURNS;
+    private static final Rules ruleId = Rules.NoCondReturns;
 
     private final DiagnosticCollector diags;
 

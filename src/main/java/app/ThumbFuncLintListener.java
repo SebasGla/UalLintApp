@@ -12,7 +12,7 @@ import java.util.List;
 public final class ThumbFuncLintListener extends LinterParserBaseListener
 {
 
-    private static final Rules ruleId = Rules.THUMBFUNC;
+    private static final Rules ruleId = Rules.ThumbFunc;
 
     private final DiagnosticCollector diags;
     private final List<Token> tokens;
@@ -132,7 +132,7 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
          */
         if (looksLikeSwallowedRoutine(labelIndex))
         {
-            diags.report(ruleId, Severity.ERROR, labelToken, "Missing .thumb_func before routine label (swallowed routine heuristic).");
+            diags.report(ruleId, Severity.WARNING, labelToken, " Possible missing .thumb_func before routine label (manual check needed).");
         }
     }
 

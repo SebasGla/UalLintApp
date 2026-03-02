@@ -17,6 +17,6 @@ public final class ImmediateHashLintListener extends LinterParserBaseListener
     {
         Token t = ctx.getStart();
 
-        diags.report(Rules.IMMEDIATE, Severity.ERROR, t, "Immediate value without '#' sigil.");
+        diags.report(Rules.ImmediateHash, Severity.ERROR, t, "Immediate value without '#' character.");
     }
 }

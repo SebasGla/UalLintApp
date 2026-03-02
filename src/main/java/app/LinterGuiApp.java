@@ -26,7 +26,8 @@ import java.util.List;
 
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.TransferMode;
-
+import javafx.scene.control.CheckBox;
+import java.util.LinkedHashMap;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.flowless.VirtualizedScrollPane;
@@ -61,7 +62,7 @@ public final class LinterGuiApp extends Application
     private final TableView<RegisterEntry> registerTable;
     private final ObservableList<RegisterEntry> registerRows;
     private final Path registerStorePath;
-
+    private final Map<String, CheckBox> ruleCheckboxes;
     private Integer highlightedLine = null;
     private static final String LINE_HIGHLIGHT_STYLE = "-fx-background-color: rgba(255, 0, 0, 0.20);";
 
@@ -76,7 +77,7 @@ public final class LinterGuiApp extends Application
         this.registerTable = new TableView<>();
         this.registerRows = FXCollections.observableArrayList();
         this.registerStorePath = RegisterTableStore.defaultPath();
-
+        this.ruleCheckboxes = new LinkedHashMap<>();
     }
 
     @Override
@@ -127,8 +128,9 @@ public final class LinterGuiApp extends Application
 
         Accordion sidebar = new Accordion();
         sidebar.getPanes().add(buildRegisterTablePane(stage));
-        sidebar.setExpandedPane(sidebar.getPanes().get(0));
+        sidebar.getPanes().add(buildRulesPane()); // NEU: Rules Pane hinzufügen
         root.setLeft(sidebar);
+
 
 
         table.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) ->
@@ -165,6 +167,7 @@ public final class LinterGuiApp extends Application
         {
             System.err.println("editor.css not found on classpath");
         }
+
 
 
         stage.show();
@@ -297,6 +300,16 @@ public final class LinterGuiApp extends Application
         status.setText("Running lint...");
         table.getItems().clear();
 
+        // NEU: Ausgewählte Regeln sammeln
+        List<String> enabledRules = new ArrayList<>();
+        for (Map.Entry<String, CheckBox> entry : ruleCheckboxes.entrySet())
+        {
+            if (entry.getValue().isSelected())
+            {
+                enabledRules.add(entry.getKey());
+            }
+        }
+
         Task<List<DiagnosticRow>> task = new Task<>()
         {
             @Override
@@ -306,11 +319,11 @@ public final class LinterGuiApp extends Application
                 return LintFacade.run(
                         editor.getText(),
                         currentFile.getName(),
-                        addrToName
+                        addrToName,
+                        enabledRules // NEU: Parameter übergeben
                 );
             }
         };
-
         task.setOnSucceeded(e ->
         {
             table.getItems().setAll(task.getValue());
@@ -600,5 +613,32 @@ public final class LinterGuiApp extends Application
     public static void main(String[] args)
     {
         launch(args);
+    }
+
+    private TitledPane buildRulesPane()
+    {
+        VBox box = new VBox();
+        box.setSpacing(8);
+        box.setPadding(new Insets(8));
+
+        // Namen der Regeln (basierend auf deinen Listenern in LinterRunner)
+        String[] rules = {
+                "BlankEof", "ItBlock", "CondFlags", "ImmediateHash",
+                "AbsoluteAddress", "ShortInstructionForm", "ShiftPow2", "ThumbFunc",
+                "NoCondReturns", "ParamsAAPCS", "RegisterFromManualEqu",
+                "RoutineReturn", "LogicalOp", "RecursiveRoutine"
+        };
+
+        for (String rule : rules)
+        {
+            CheckBox cb = new CheckBox(rule);
+            cb.setSelected(true); // Standardmäßig sind alle Regeln an
+            ruleCheckboxes.put(rule, cb);
+            box.getChildren().add(cb);
+        }
+
+        TitledPane pane = new TitledPane("Lint Rules", box);
+        pane.setCollapsible(true);
+        return pane;
     }
 }

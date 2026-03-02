@@ -11,7 +11,7 @@ import java.util.Set;
 public final class ParamsAAPCSLintListener extends LinterParserBaseListener
 {
 
-    private static final Rules ruleId = Rules.ROUTINEPARAMS;
+    private static final Rules ruleId = Rules.ParamsAAPCS;
 
     private final DiagnosticCollector diags;
 
@@ -47,7 +47,7 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
             if (current.usedCalleeSaved.contains(r) && !current.savedInPrologue.contains(r))
             {
                 diags.report(ruleId, Severity.ERROR, current.routineLabel,
-                        "AAPCS: callee-saved register r" + r + " is used but not saved in the routine prologue.");
+                        "AAPCS: callee-saved register r" + r + " is used but not pushed on the stack.");
             }
         }
 

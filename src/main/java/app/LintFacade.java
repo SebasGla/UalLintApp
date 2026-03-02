@@ -10,9 +10,11 @@ public final class LintFacade
     {
     }
 
-    public static List<DiagnosticRow> run(String sourceText, String sourceName, Map<Long, String> addrToName)
+    // Signatur um 'List<String> enabledRules' erweitert
+    public static List<DiagnosticRow> run(String sourceText, String sourceName, Map<Long, String> addrToName, List<String> enabledRules)
     {
-        DiagnosticCollector dc = LinterRunner.run(sourceText, sourceName, addrToName);
+        // Parameter weiterreichen
+        DiagnosticCollector dc = LinterRunner.run(sourceText, sourceName, addrToName, enabledRules);
 
         List<DiagnosticRow> rows = new ArrayList<>();
 

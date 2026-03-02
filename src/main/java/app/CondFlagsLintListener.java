@@ -85,7 +85,7 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
 
     private void reportPending(String msg)
     {
-        diags.report(Rules.CONDFLAGS, Severity.WARNING, pendingProducer, msg);
+        diags.report(Rules.CondFlags, Severity.WARNING, pendingProducer, msg);
     }
 
     // -------------------------

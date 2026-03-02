@@ -9,7 +9,7 @@ import java.util.Map;
 
 public final class RegisterManualEquLintListener extends LinterParserBaseListener
 {
-    private static final Rules ruleId = Rules.REGMANUAL;
+    private static final Rules ruleId = Rules.RegisterFromManualEqu;
 
     private final DiagnosticCollector diags;
     private final Map<Long, String> addrToName;
@@ -34,10 +34,10 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         if (ctx.ID() == null) {
             diags.reportAt(
                     ruleId,
-                    Severity.WARNING,
+                    Severity.ERROR,
                     ctx.getStart().getLine(),
                     ctx.getStart().getCharPositionInLine(),
-                    "Malformed .equ directive: expected `.equ <NAME>, <EXPR>`.",
+                    "Bad .equ directive: expected `.equ <NAME>, <EXPR>`.",
                     ctx.getText()
             );
             return;
@@ -66,7 +66,7 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
                         ruleId,
                         Severity.WARNING,
                         nameTok,
-                        "Reference manual mismatch: address "
+                        "Register name mismatch: address "
                                 + formatHex(addr)
                                 + " is `"
                                 + expectedNameForAddr

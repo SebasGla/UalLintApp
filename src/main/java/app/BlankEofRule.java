@@ -26,7 +26,7 @@ public final class BlankEofRule
             int first = firstTrailingSpaceNoNewlineIndex(sourceText);
             int[] lc = lineColAt(sourceText, first);
 
-            dc.reportAt(Rules.BLANKEOF, Severity.ERROR, lc[0], lc[1], "The source file must not end with whitespace.", "whitespace");
+            dc.reportAt(Rules.BlankEof, Severity.ERROR, lc[0], lc[1], "The source file must not end with whitespace.", "whitespace");
             return;
         }
 
@@ -54,7 +54,7 @@ public final class BlankEofRule
             if (j > 0 && sourceText.charAt(j - 1) == '\n')
             {
                 int[] lc = lineColAt(sourceText, j);
-                dc.reportAt(Rules.BLANKEOF, Severity.ERROR, lc[0], lc[1], "The source file must not end with an empty line.", "empty line");
+                dc.reportAt(Rules.BlankEof, Severity.ERROR, lc[0], lc[1], "The source file must not end with an empty line.", "empty line");
             }
         }
     }

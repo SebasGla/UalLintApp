@@ -16,7 +16,7 @@ import java.util.Set;
 
 public final class RoutineReturnLintListener extends LinterParserBaseListener
 {
-    private static final Rules ruleId = Rules.ROUTINERETURN;
+    private static final Rules ruleId = Rules.RoutineReturn;
 
     private final DiagnosticCollector diags;
     private final List<Token> tokens;

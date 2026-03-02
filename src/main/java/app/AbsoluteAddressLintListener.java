@@ -25,7 +25,7 @@ public final class AbsoluteAddressLintListener extends LinterParserBaseListener
         if (isHexOnlyConstExpr(ctx.constExpr()))
         {
             Token t = ctx.constExpr().getStart();
-            diags.report(Rules.ABSOLUTEADDR, Severity.ERROR, t, "Absolute address used; use a label/symbol instead of a magic address.");
+            diags.report(Rules.AbsoluteAddress, Severity.WARNING, t, "Absolute address used; use a label/symbol instead of a magic address.");
         }
     }
 

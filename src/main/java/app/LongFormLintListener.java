@@ -112,8 +112,9 @@ public final class LongFormLintListener extends LinterParserBaseListener
 
     private void report(Token where, String msg)
     {
-        diags.report(Rules.FULLINSTRUCTIONS, Severity.WARNING, where, msg);
+        diags.report(Rules.ShortInstructionForm, Severity.WARNING, where, msg);
     }
+
 
     private static String toLower(String s)
     {

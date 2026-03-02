@@ -7,7 +7,7 @@ import org.antlr.v4.runtime.Token;
 
 public final class LogicalOpLintListener extends LinterParserBaseListener
 {
-    private static final Rules ruleId = Rules.LOGICALOP;
+    private static final Rules ruleId = Rules.LogicalOp;
 
     private final DiagnosticCollector diags;
 

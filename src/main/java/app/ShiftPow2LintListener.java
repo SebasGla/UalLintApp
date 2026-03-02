@@ -94,7 +94,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
             int sh = log2(c.value);
             String suggested = "lsl " + rd + ", " + rn + ", #" + sh;
 
-            diags.report(Rules.SHIFTPOW2, Severity.WARNING, opTok,
+            diags.report(Rules.ShiftPow2, Severity.WARNING, opTok,
                     "multiplication by 2^n must use shifts. " +
                             "found `" + mnemonic + " " + rd + ", " + rn + ", " + rm + "` with " + rm + " = #" + c.value + ". " +
                             "use: `" + suggested + "`.");
@@ -108,7 +108,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
             int sh = log2(c.value);
             String suggested = "lsl " + rd + ", " + rm + ", #" + sh;
 
-            diags.report(Rules.SHIFTPOW2, Severity.WARNING, opTok,
+            diags.report(Rules.ShiftPow2, Severity.WARNING, opTok,
                     "multiplication by 2^n must use shifts. " +
                             "found `" + mnemonic + " " + rd + ", " + rn + ", " + rm + "` with " + rn + " = #" + c.value + ". " +
                             "use: `" + suggested + "`.");
@@ -146,7 +146,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         {
             String suggested = "lsr " + rd + ", " + rn + ", #" + sh;
 
-            diags.report(Rules.SHIFTPOW2, Severity.WARNING, opTok,
+            diags.report(Rules.ShiftPow2, Severity.WARNING, opTok,
                     "division by 2^n must use shifts. " +
                             "found `" + mnemonic + " " + rd + ", " + rn + ", " + rm + "` with " + rm + " = #" + c.value + ". " +
                             "use: `" + suggested + "`.");
@@ -157,7 +157,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         {
             String suggested = "asr " + rd + ", " + rn + ", #" + sh;
 
-            diags.report(Rules.SHIFTPOW2, Severity.WARNING, opTok,
+            diags.report(Rules.ShiftPow2, Severity.WARNING, opTok,
                     "division by 2^n must use shifts. " +
                             "found `" + mnemonic + " " + rd + ", " + rn + ", " + rm + "` with " + rm + " = #" + c.value + ". " +
                             "use: `" + suggested + "`. note: `asr` matches `sdiv` only if the dividend is non-negative.");
