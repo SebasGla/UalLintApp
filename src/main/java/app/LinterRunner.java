@@ -35,6 +35,7 @@ public final class LinterRunner
         walker.walk(new ParamsAAPCSLintListener(dc), tree);
         walker.walk(new RegisterManualEquLintListener(dc, addrToName), tree);
         walker.walk(new RoutineReturnLintListener(dc, tokens), tree);
+        walker.walk(new LogicalOpLintListener(dc), tree);
 
         return dc;
     }
