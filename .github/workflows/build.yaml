@@ -1,53 +1,86 @@
-name: Build Native Apps
+name: Build Native Apps & Release
 
-# Wann soll gebaut werden? Bei jedem Push auf 'main' oder manuell per Button.
+# Wir bauen und releasen jetzt nur noch, wenn du einen neuen "Tag" erstellst (z.B. v1.0.0)
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch: 
+    tags:
+      - 'v*' # Reagiert auf alle Tags, die mit "v" anfangen (z.B. v1.0.0)
+  workflow_dispatch:
 
 jobs:
   build:
     name: Build on ${{ matrix.os }}
-    # Hier definieren wir die Betriebssysteme
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
-        
     runs-on: ${{ matrix.os }}
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        java-version: '25' # Hier kannst du deine gewünschte JDK-Version eintragen
-        distribution: 'temurin' # Ein gängiges, kostenloses OpenJDK
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
 
-    - name: Make gradlew executable (Linux only)
-      if: runner.os == 'Linux'
-      run: chmod +x ./gradlew
+      - name: Make gradlew executable (Linux only)
+        if: runner.os == 'Linux'
+        run: chmod +x ./gradlew
 
-    - name: Build and Prepare JPackage Input
-      run: ./gradlew clean prepareJpackage
-      shell: bash
+      - name: Build and Prepare JPackage Input
+        run: ./gradlew clean prepareJpackage
+        shell: bash
 
-    - name: Run jpackage
-      # actions/setup-java packt jpackage automatisch in den Pfad!
-      run: >
-        jpackage 
-        --type app-image 
-        --name UalLintApp 
-        --dest build/dist 
-        --input build/jpackage-input 
-        --main-jar UalLintApp.jar 
-        --main-class app.MainGui
-      shell: bash
+      - name: Run jpackage
+        run: >
+          jpackage 
+          --type app-image 
+          --name UalLintApp 
+          --dest build/dist 
+          --input build/jpackage-input 
+          --main-jar UalLintApp.jar 
+          --main-class app.MainGui
+        shell: bash
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: UalLintApp-${{ runner.os }}
-        path: build/dist/
+      # Wir packen den fertigen Ordner selbst in eine ZIP-Datei
+      - name: Zip Output (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd build/dist
+          zip -r UalLintApp-Linux.zip UalLintApp/
+        shell: bash
+
+      - name: Zip Output (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path build\dist\UalLintApp -DestinationPath build\dist\UalLintApp-Windows.zip
+        shell: powershell
+
+      # Lade die fertige ZIP intern hoch, damit der Release-Job sie abholen kann
+      - name: Upload Artifact for Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-zip-${{ runner.os }}
+          path: build/dist/UalLintApp-*.zip
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    needs: build # Wartet, bis Windows UND Linux fertig sind
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') # Führt diesen Job nur aus, wenn ein Tag gepusht wurde
+
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: app-zip-*
+          merge-multiple: true
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true
