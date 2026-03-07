@@ -3,6 +3,11 @@ package app;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 
+/*
+ * Data model for the custom hardware registers table in the GUI.
+ * Uses JavaFX StringProperty so the TableView can automatically
+ * track changes and update when the user edits a cell.
+ */
 public final class RegisterEntry
 {
     private final StringProperty registerName;
@@ -24,6 +29,9 @@ public final class RegisterEntry
         registerName.set(v);
     }
 
+    /*
+     * Required by JavaFX PropertyValueFactory to bind the name data to the UI table column.
+     */
     public StringProperty registerNameProperty()
     {
         return registerName;
@@ -39,6 +47,9 @@ public final class RegisterEntry
         address.set(v);
     }
 
+    /*
+     * Required by JavaFX PropertyValueFactory to bind the address data to the UI table column.
+     */
     public StringProperty addressProperty()
     {
         return address;

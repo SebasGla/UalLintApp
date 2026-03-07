@@ -5,15 +5,21 @@ import antlr4gen.LinterParserBaseListener;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.Token;
 
+/*
+ * Linting rule to catch arithmetic operations being used for bitwise/logical tasks.
+ * For example, adding a power of two (add r0, #4) instead of OR-ing it (orr r0, #4),
+ * or multiplying by a power of two (mul) instead of just bit-shifting (lsl).
+ */
 public final class LogicalOpLintListener extends LinterParserBaseListener
 {
     private static final Rules ruleId = Rules.LogicalOp;
 
     private final DiagnosticCollector diags;
 
-    private int lastMaskMovLine;
-    private String lastMaskMovReg;
-    private Long lastMaskMovValue;
+    // Track state to catch multi-line operations (e.g., MOV followed by MUL)
+    private int lastMaskMovLine;     // The line number of the last MOV instruction
+    private String lastMaskMovReg;   // Which register got loaded with the mask
+    private Long lastMaskMovValue;   // The actual numeric value of the mask
 
     public LogicalOpLintListener(DiagnosticCollector diags)
     {
@@ -23,6 +29,11 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         this.lastMaskMovValue = null;
     }
 
+    /*
+     * Hooks into MOV instructions. We want to see if a developer is loading a
+     * specific bitmask (like 0x01 or 0xFFFFFFFF) into a register so we can
+     * check what they do with it on the very next line.
+     */
     @Override
     public void exitMovInstr(LinterParser.MovInstrContext ctx)
     {
@@ -55,6 +66,7 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
             return;
         }
 
+        // Try to figure out the actual number being moved
         v = extractConstValue(op2);
 
         if (v == null)
@@ -63,17 +75,23 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
             return;
         }
 
+        // Only care if it looks like a bitmask (powers of 2, or all 1s like 0xFF)
         if (!isMaskLike(v))
         {
             clearLastMaskMov();
             return;
         }
 
+        // Save the state for the next instruction to check
         this.lastMaskMovLine = ctx.getStart().getLine();
         this.lastMaskMovReg = rd.getText();
         this.lastMaskMovValue = v;
     }
 
+    /*
+     * Checks standard ADD/SUB instructions with a full 3-operand list.
+     * Looks for immediate values that are powers of 2.
+     */
     @Override
     public void exitArithmLong(LinterParser.ArithmLongContext ctx)
     {
@@ -105,6 +123,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         reportAddSub(ctx.op, ctx.getStart(), immValue);
     }
 
+    /*
+     * Checks short ADD/SUB instructions (e.g., ADD R0, #4).
+     */
     @Override
     public void exitArithmShort(LinterParser.ArithmShortContext ctx)
     {
@@ -128,6 +149,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         reportAddSub(ctx.op, ctx.getStart(), immValue);
     }
 
+    /*
+     * Checks if a long multiplication uses the mask we tracked from the previous line.
+     */
     @Override
     public void exitMulLong(LinterParser.MulLongContext ctx)
     {
@@ -148,6 +172,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         reportMulOrDiv(ctx.getStart(), "mul");
     }
 
+    /*
+     * Checks if a short multiplication uses the tracked mask.
+     */
     @Override
     public void exitMulShort(LinterParser.MulShortContext ctx)
     {
@@ -168,6 +195,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         reportMulOrDiv(ctx.getStart(), "mul");
     }
 
+    /*
+     * Checks if a division instruction uses the tracked mask.
+     */
     @Override
     public void exitDivInstr(LinterParser.DivInstrContext ctx)
     {
@@ -188,6 +218,10 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         reportMulOrDiv(ctx.getStart(), "div");
     }
 
+    /*
+     * Generates the actual warning for using ADD or SUB with a power of 2.
+     * Suggests ORR or BIC instead.
+     */
     private void reportAddSub(Token opToken, Token atToken, long immValue)
     {
         String opText;
@@ -232,6 +266,10 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         }
     }
 
+    /*
+     * Generates warnings for using MUL or DIV with a mask.
+     * Suggests LSL/LSR/ASR (shifts) or AND/BIC depending on the mask shape.
+     */
     private void reportMulOrDiv(Token atToken, String kind)
     {
         long v;
@@ -243,6 +281,7 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
 
         v = this.lastMaskMovValue.longValue();
 
+        // If it's a straight power of 2 (e.g., 4), they should be bit-shifting
         if (isPow2(v))
         {
             if (kind.equals("mul"))
@@ -267,6 +306,7 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
             return;
         }
 
+        // If it's a block of 1s (e.g., 0xFF), they should probably be doing a bitwise AND/BIC
         if (isPow2Minus1(v))
         {
             diags.report(
@@ -281,6 +321,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         }
     }
 
+    /*
+     * Checks if the tracked MOV instruction happened exactly one line prior to the current line.
+     */
     private boolean isMovMaskImmediatelyBefore(int currentLine)
     {
         if (this.lastMaskMovLine < 0)
@@ -296,6 +339,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return this.lastMaskMovLine == (currentLine - 1);
     }
 
+    /*
+     * Checks if the target register was used as an input for a long MUL instruction.
+     */
     private static boolean usesAsSourceMulLong(LinterParser.MulLongContext ctx, String reg)
     {
         String rn;
@@ -312,6 +358,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return regEquals(rn, reg) || regEquals(rm, reg);
     }
 
+    /*
+     * Checks if the target register was used as an input for a short MUL instruction.
+     */
     private static boolean usesAsSourceMulShort(LinterParser.MulShortContext ctx, String reg)
     {
         String rn;
@@ -326,6 +375,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return regEquals(rn, reg);
     }
 
+    /*
+     * Checks if the target register was used as an input for a DIV instruction.
+     */
     private static boolean usesAsSourceDiv(LinterParser.DivInstrContext ctx, String reg)
     {
         int n;
@@ -345,6 +397,7 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
 
         i = 1;
 
+        // Loop through all registers (except the first one, which is the destination)
         while (i < n)
         {
             LinterParser.RegisterContext r;
@@ -362,6 +415,10 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return false;
     }
 
+    /*
+     * Extracts an immediate number, but ignores 1.
+     * (Adding/subtracting 1 is normal incrementing, not usually a bitmask operation).
+     */
     private static Long extractPow2ImmediateExceptOne(LinterParser.Op2Context op2)
     {
         Long v;
@@ -386,6 +443,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return v;
     }
 
+    /*
+     * Digs into the ANTLR context to extract the mathematical expression tree.
+     */
     private static Long extractConstValue(LinterParser.Op2Context op2)
     {
         LinterParser.ConstExprContext expr;
@@ -421,6 +481,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return v;
     }
 
+    /*
+     * Validates if a number is a power of 2, or one less than a power of 2 (e.g., 0xFF).
+     */
     private static boolean isMaskLike(long v)
     {
         if (v <= 0)
@@ -431,6 +494,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return isPow2(v) || isPow2Minus1(v);
     }
 
+    /*
+     * Classic bit-twiddling trick to check if a number is a power of 2.
+     */
     private static boolean isPow2(long v)
     {
         if (v <= 0)
@@ -441,6 +507,9 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return (v & (v - 1)) == 0;
     }
 
+    /*
+     * Checks if a number consists of all 1s up to a point (like 7, 15, 255).
+     */
     private static boolean isPow2Minus1(long v)
     {
         if (v <= 0)
@@ -483,6 +552,10 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return a.equalsIgnoreCase(b);
     }
 
+    /*
+     * Recursively walks down the ANTLR expression tree to calculate the final
+     * mathematical result of a constant expression (e.g., evaluating "4 + 8" to 12).
+     */
     private static Long evalConstExpr(LinterParser.ConstExprContext ctx)
     {
         if (ctx == null)
@@ -576,7 +649,7 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
                 {
                     if (b == 0)
                     {
-                        return null;
+                        return null; // Protect against divide-by-zero crashes
                     }
 
                     return a / b;
@@ -682,6 +755,10 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return null;
     }
 
+    /*
+     * The base case for evalConstExpr. Converts raw text numbers (hex, bin, dec)
+     * into Longs, or recursively dives into parentheses.
+     */
     private static Long evalConstPrimary(LinterParser.ConstPrimaryContext p)
     {
         String t;
@@ -744,6 +821,10 @@ public final class LogicalOpLintListener extends LinterParserBaseListener
         return null;
     }
 
+    /*
+     * Wrapper to safely parse strings into numbers without throwing exceptions
+     * that would crash the whole walker.
+     */
     private static Long parseLongSafe(String s, int radix)
     {
         try

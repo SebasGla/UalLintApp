@@ -7,9 +7,15 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import java.util.ArrayList;
 import java.util.List;
 
+/*
+ * Linting rule to detect and warn about recursive function calls.
+ * In embedded systems and strict coding standards (like MISRA), recursion
+ * is heavily discouraged because it makes stack usage unpredictable and
+ * can easily lead to stack overflows on hardware with limited memory.
+ */
 public final class RecursiveRoutineLintListener extends LinterParserBaseListener
 {
-    // HINWEIS: Du musst RECURSIVEROUTINE zu deinem Rules-Enum hinzufügen!
+    // NOTE: Make sure 'RecursiveRoutine' is added to your Rules enum!
     private static final Rules ruleId = Rules.RecursiveRoutine;
 
     private final DiagnosticCollector diags;
@@ -19,6 +25,11 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
         this.diags = diags;
     }
 
+    /*
+     * Triggered when the parser enters a new function block.
+     * We grab the function's name and scan its entire body to see if it ever
+     * tries to branch (call) back to its own name.
+     */
     @Override
     public void enterRoutine(LinterParser.RoutineContext ctx)
     {
@@ -30,6 +41,7 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
 
         labelCtx = ctx.labelDef();
 
+        // Safety check: ensure we actually have a label
         if (labelCtx == null || labelCtx.LABEL_DEF() == null)
         {
             return;
@@ -37,7 +49,7 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
 
         rawLabel = labelCtx.LABEL_DEF().getText();
 
-        // Entferne den Doppelpunkt am Ende des Labels (z.B. "my_func:" -> "my_func")
+        // Strip the trailing colon from the label (e.g., "my_func:" becomes "my_func")
         routineName = rawLabel.substring(0, rawLabel.length() - 1);
 
         body = ctx.routineBody();
@@ -49,8 +61,10 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
 
         branches = new ArrayList<>();
 
+        // Find every single branch instruction inside this function
         collectBranches(body, branches);
 
+        // Check if any of those branches point back to this exact function
         for (LinterParser.BranchContext b : branches)
         {
             LinterParser.LabelRefContext labelRef;
@@ -58,7 +72,7 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
 
             labelRef = b.labelRef();
 
-            // Bei Sprüngen über Register (z.B. bx r0) ist labelRef null
+            // Ignore register branches (like bx lr) since we can't statically resolve their targets
             if (labelRef == null)
             {
                 continue;
@@ -66,6 +80,7 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
 
             targetName = labelRef.getText();
 
+            // If the target matches the function name, we caught a recursive call!
             if (routineName.equals(targetName))
             {
                 diags.report(
@@ -78,6 +93,10 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
         }
     }
 
+    /*
+     * Helper method to recursively dig through the AST and extract every BranchContext
+     * we can find inside a specific node (like the routine body).
+     */
     private void collectBranches(ParseTree node, List<LinterParser.BranchContext> out)
     {
         if (node == null)
@@ -85,16 +104,18 @@ public final class RecursiveRoutineLintListener extends LinterParserBaseListener
             return;
         }
 
+        // Base case: we found a branch, add it to our list
         if (node instanceof LinterParser.BranchContext)
         {
             out.add((LinterParser.BranchContext) node);
-            return;
+            return; // Branches don't contain other branches, so we can stop digging here
         }
 
         int n;
 
         n = node.getChildCount();
 
+        // Recursive step: keep digging into child nodes
         for (int i = 0; i < n; i++)
         {
             collectBranches(

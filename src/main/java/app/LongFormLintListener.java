@@ -3,19 +3,13 @@ package app;
 import antlr4gen.*;
 import org.antlr.v4.runtime.Token;
 
-/**
- * Rule: LONGFORM
- * Only allow the long instruction form.
- *
- * Short form means the assembler-implied "Rn == Rd" variant, e.g.:
- *   orr r1, r2        (short)  -> illegal by policy
- *   orr r1, r1, r2    (long)   -> legal
- *
- * The updated grammar encodes this via labeled alternatives:
- *  - arithmeticInstr: #ArithmShort
- *  - mulInstr:        #MulShort
- *  - shiftInstruction:#ShiftShort
- *  - logicInstr:      #LogicShort
+/*
+ * Linting rule to enforce the use of the "long" instruction form.
+ * * Assembly allows shorthand (e.g., "ADD R1, R2") which implicitly means
+ * "ADD R1, R1, R2". This rule bans the short form to ensure code is
+ * completely explicit and easier to read.
+ * * It relies heavily on ANTLR's rule labels (like #ArithmShort) to easily
+ * distinguish between the short and long grammar branches.
  */
 public final class LongFormLintListener extends LinterParserBaseListener
 {
@@ -26,27 +20,35 @@ public final class LongFormLintListener extends LinterParserBaseListener
         this.diags = diags;
     }
 
+    /*
+     * Intercepts every parsed instruction and checks if it falls into one of
+     * the "short" grammar categories defined in the .g4 file.
+     */
     @Override
     public void exitInstruction(LinterParser.InstructionContext ctx)
     {
+        // Check if it's an arithmetic instruction that hit the #ArithmShort branch
         if (ctx.arithmeticInstr() != null && ctx.arithmeticInstr() instanceof LinterParser.ArithmShortContext)
         {
             reportArithmShort((LinterParser.ArithmShortContext) ctx.arithmeticInstr());
             return;
         }
 
+        // Check if it's a logical instruction that hit the #LogicShort branch
         if (ctx.logicInstr() != null && ctx.logicInstr() instanceof LinterParser.LogicShortContext)
         {
             reportLogicShort((LinterParser.LogicShortContext) ctx.logicInstr());
             return;
         }
 
+        // Check if it's a shift instruction that hit the #ShiftShort branch
         if (ctx.shiftInstruction() != null && ctx.shiftInstruction() instanceof LinterParser.ShiftShortContext)
         {
             reportShiftShort((LinterParser.ShiftShortContext) ctx.shiftInstruction());
             return;
         }
 
+        // Check if it's a multiply instruction that hit the #MulShort branch
         if (ctx.mulInstr() != null && ctx.mulInstr() instanceof LinterParser.MulShortContext)
         {
             reportMulShort((LinterParser.MulShortContext) ctx.mulInstr());
@@ -58,14 +60,21 @@ public final class LongFormLintListener extends LinterParserBaseListener
     // Reporting (per short form)
     // -------------------------
 
+    /*
+     * Formats the warning for short arithmetic instructions.
+     * It actively reconstructs what the code *should* look like (the suggested long form)
+     * so the user knows exactly how to fix it.
+     */
     private void reportArithmShort(LinterParser.ArithmShortContext ctx)
     {
         Token opcode = ctx.getStart();
         String mnemonic = toLower(opcode.getText());
 
+        // Grab the destination register and the second operand
         String rd = ctx.rd.getText();
         String op2 = ctx.op2().getText();
 
+        // Build the suggested fix: "add r1, r1, r2"
         String suggested = mnemonic + " " + rd + ", " + rd + ", " + op2;
 
         report(opcode, "Short form is not allowed for arithmetic instruction. Use long form: `" + suggested + "`.");
@@ -77,7 +86,7 @@ public final class LongFormLintListener extends LinterParserBaseListener
         String mnemonic = toLower(opcode.getText());
 
         String rd = ctx.rd.getText();
-        String rn = ctx.rn.getText(); // rn is op2 in the short rule
+        String rn = ctx.rn.getText(); // In the short logic rule, 'rn' acts as the second operand
 
         String suggested = mnemonic + " " + rd + ", " + rd + ", " + rn;
 
@@ -90,7 +99,7 @@ public final class LongFormLintListener extends LinterParserBaseListener
         String mnemonic = toLower(opcode.getText());
 
         String rd = ctx.rd.getText();
-        String rn = ctx.rn.getText(); // rn is op2 in the short rule
+        String rn = ctx.rn.getText();
 
         String suggested = mnemonic + " " + rd + ", " + rd + ", " + rn;
 
@@ -114,7 +123,6 @@ public final class LongFormLintListener extends LinterParserBaseListener
     {
         diags.report(Rules.ShortInstructionForm, Severity.WARNING, where, msg);
     }
-
 
     private static String toLower(String s)
     {

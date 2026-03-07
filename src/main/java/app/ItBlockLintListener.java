@@ -3,6 +3,11 @@ package app;
 import org.antlr.v4.runtime.Token;
 import antlr4gen.*;
 
+/*
+ * Linting rule to ensure conditional branches are not placed inside IT (If-Then) blocks.
+ * In ARM assembly, putting instructions like 'BEQ' or 'CBZ' inside an IT block
+ * is generally invalid or highly discouraged because it breaks the predictable control flow.
+ */
 public final class ItBlockLintListener extends LinterParserBaseListener
 {
 
@@ -10,7 +15,7 @@ public final class ItBlockLintListener extends LinterParserBaseListener
 
     private final DiagnosticCollector diags;
 
-    /** Number of *remaining* instructions in the current IT-block. */
+    // Tracks how many instructions are left to process inside the current IT block
     private int itRemaining = 0;
 
     public ItBlockLintListener(DiagnosticCollector diags)
@@ -22,15 +27,20 @@ public final class ItBlockLintListener extends LinterParserBaseListener
     // 1) Trigger on IT instruction
     // ---------------------------
 
+    /*
+     * Hook that triggers when we hit an IT instruction.
+     * We calculate the size of the block based on the mnemonic length
+     * (e.g., "ITT" = 3 chars, meaning 2 instructions follow).
+     */
     @Override
     public void exitItInstr(LinterParser.ItInstrContext ctx) {
-        // Your grammar: itInstr: IT COND;
-        // Lexer: IT: 'it' ('t'|'e')? ('t'|'e')? ('t'|'e')?
-        // Examples: "it" => 1 instr, "itt"/"ite" => 2, "ittt"/"itte"/... => 3, "itttt" => 4
-        String itText = ctx.IT().getText().toLowerCase(); // caseInsensitive lexer, but normalize anyway
-        int blockLen = Math.max(1, itText.length() - 1);  // "it" length 2 => 1
+        String itText = ctx.IT().getText().toLowerCase(); // Normalize to lowercase just in case
 
-        // Overwrite state (nested IT is invalid in real Thumb, but grammar allows; you can add a separate rule later)
+        // The length of the block is simply the string length minus 1
+        // Example: "ite" (length 3) -> 2 instructions in the block
+        int blockLen = Math.max(1, itText.length() - 1);
+
+        // Reset our counter to track the upcoming instructions
         itRemaining = blockLen;
     }
 
@@ -38,45 +48,48 @@ public final class ItBlockLintListener extends LinterParserBaseListener
     // 2) For every instruction, check IT-block body
     // --------------------------------------------
 
+    /*
+     * Hook that runs for every instruction.
+     * If we are currently inside an active IT block, we check the instruction for violations.
+     */
     @Override
     public void exitInstruction(LinterParser.InstructionContext ctx) {
-        // The IT instruction itself should not be treated as "inside an IT-block body".
+        // Skip the actual IT instruction itself so we don't accidentally count it
         if (ctx.itInstr() != null) {
             return;
         }
 
+        // If the counter is 0, we aren't in an IT block. Just move on.
         if (itRemaining <= 0) {
             return;
         }
 
-        // We are inside the IT-block body (next 1..4 instructions after IT).
-        // Rule 4: No conditional branch in IT-block.
+        // We are officially inside the IT block body.
+        // Check if the developer tried to sneak a conditional branch in here.
         Token offending = getConditionalBranchToken(ctx);
         if (offending != null)
         {
             diags.report(ruleId, Severity.ERROR, offending, "Conditional branch must not appear inside an IT block.");
         }
 
-        // Consume one slot from the IT-block
+        // Tick down the counter since we just processed one of the IT block's instructions
         itRemaining--;
     }
 
-    /**
-     * Returns the offending token if the given instruction is a *conditional* branch
-     * according to your grammar/tokens; otherwise returns null.
+    /*
+     * Scans the instruction to see if it's a conditional branch.
+     * Returns the offending token if it is, otherwise returns null.
      */
     private static Token getConditionalBranchToken(LinterParser.InstructionContext ctx)
     {
 
-        // (A) cbz/cbnz are always conditional branches.
+        // CBZ (Compare and Branch on Zero) and CBNZ are inherently conditional
         if (ctx.cbzInstr() != null)
         {
-            // cbzInstr: CBNZ register COMMA labelRef;
-            // CBNZ token covers both 'cbz' and 'cbnz'
             return ctx.cbzInstr().getStart();
         }
 
-        // (B) "branch" rule: BRANCH, BRANCHLINK, BRANCHLINKX, BRANCHX, BRANXJAZELLE
+        // Check standard branch instructions (b, bl, blx, bx, bxj)
         if (ctx.branch() != null)
         {
             LinterParser.BranchContext b = ctx.branch();
@@ -115,10 +128,9 @@ public final class ItBlockLintListener extends LinterParserBaseListener
         return null;
     }
 
-    /**
-     * Your lexer folds {cond} into the mnemonic token text (e.g. "bne", "blt", "bxge").
-     * This function detects whether the mnemonic is conditional (i.e., has a {cond} suffix)
-     * excluding the always condition "al".
+    /*
+     * Helper to detect if a branch mnemonic has a condition attached.
+     * Extracts suffixes like 'ne' from 'bne' and verifies they aren't unconditional.
      */
     private static boolean isConditionalMnemonic(Token mnemonicToken, String baseMnemonic)
     {
@@ -130,15 +142,21 @@ public final class ItBlockLintListener extends LinterParserBaseListener
         text = text.toLowerCase();
         baseMnemonic = baseMnemonic.toLowerCase();
 
+        // Safety check to ensure the token actually starts with our expected instruction
         if (!text.startsWith(baseMnemonic))
         {
-            // unexpected, but then we do not flag here
             return false;
         }
 
-        String suffix = text.substring(baseMnemonic.length()); // "" or "ne" or "al" etc.
-        if (suffix.isEmpty()) return false;      // plain "b", "bl", ...
-        if (suffix.equals("al")) return false;   // "bal"/"blal" treated as unconditional
-        return true;
+        // Grab whatever text comes after the base mnemonic (e.g., the "ne" in "bne")
+        String suffix = text.substring(baseMnemonic.length());
+
+        // Plain "b" or "bl" is unconditional
+        if (suffix.isEmpty()) return false;
+
+        // "bal" (branch always) is practically unconditional
+        if (suffix.equals("al")) return false;
+
+        return true; // It has a valid condition suffix
     }
 }

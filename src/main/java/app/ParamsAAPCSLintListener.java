@@ -8,6 +8,12 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import java.util.HashSet;
 import java.util.Set;
 
+/*
+ * Linting rule to enforce the ARM Architecture Procedure Call Standard (AAPCS).
+ * It ensures two main things:
+ * 1. If you use r4-r11 (callee-saved), you must save them on the stack first.
+ * 2. Parameters (r0-r3) must be used in order (e.g., don't use r2 if you haven't used r0 and r1).
+ */
 public final class ParamsAAPCSLintListener extends LinterParserBaseListener
 {
 
@@ -15,6 +21,7 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
 
     private final DiagnosticCollector diags;
 
+    // State tracker for the function currently being parsed
     private RoutineState current;
 
     public ParamsAAPCSLintListener(DiagnosticCollector diags)
@@ -23,12 +30,19 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
         this.current = null;
     }
 
+    /*
+     * Resets the tracker when we enter a new routine.
+     */
     @Override
     public void enterRoutine(LinterParser.RoutineContext ctx)
     {
         current = new RoutineState(ctx.labelDef().getStart());
     }
 
+    /*
+     * Evaluates everything we tracked inside the routine and fires warnings if
+     * the AAPCS rules were broken.
+     */
     @Override
     public void exitRoutine(LinterParser.RoutineContext ctx)
     {
@@ -39,9 +53,7 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
             return;
         }
 
-        /*
-            Check (2): any used callee-saved register r4..r11 must be saved in the prologue push.
-         */
+        // Check if any used callee-saved register (r4..r11) was forgotten in the prologue push.
         for (r = 4; r <= 11; r++)
         {
             if (current.usedCalleeSaved.contains(r) && !current.savedInPrologue.contains(r))
@@ -51,6 +63,7 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
             }
         }
 
+        // Check if r0-r3 were used out of order (e.g., using r2 without using r0 and r1)
         if (violatesParamPrefixRule())
         {
             diags.report(
@@ -64,11 +77,13 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
             );
         }
 
-
-
         current = null;
     }
 
+    /*
+     * Hooks into PUSH instructions to record which registers are saved at the
+     * very beginning of the function (the prologue).
+     */
     @Override
     public void exitPush(LinterParser.PushContext ctx)
     {
@@ -79,9 +94,7 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
             return;
         }
 
-        /*
-            Only treat the push that is directly part of routineBody as the prologue push.
-         */
+        // Only care about PUSH instructions that are directly in the main routine body
         if (!(ctx.getParent() instanceof LinterParser.RoutineBodyContext))
         {
             return;
@@ -89,14 +102,9 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
 
         pushToken = ctx.getStart();
 
-        /*
-            Record all regs saved in prologue.
-         */
         addRegListToSet(ctx.regList(), current.savedInPrologue);
 
-        /*
-            Check (1): r0..r3 must not be pushed in prologue (caller-saved / argument regs).
-         */
+        // r0-r3 are for arguments, they shouldn't be blindly pushed in the prologue
         if (current.savedInPrologue.contains(0)
                 || current.savedInPrologue.contains(1)
                 || current.savedInPrologue.contains(2)
@@ -107,6 +115,10 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
         }
     }
 
+    /*
+     * Intercepts every register used anywhere in the function.
+     * Tracks if it was read or written to figure out if it's an incoming parameter.
+     */
     @Override
     public void exitRegister(LinterParser.RegisterContext ctx)
     {
@@ -117,6 +129,7 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
             return;
         }
 
+        // Ignore registers that are just sitting in a {r0, r1} list block
         if (isInsideRegList(ctx))
         {
             return;
@@ -124,15 +137,18 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
 
         reg = parseRegisterNumber(ctx.getText());
 
+        // Track callee-saved usage
         if (reg >= 4 && reg <= 11)
         {
             current.usedCalleeSaved.add(reg);
         }
 
+        // Track parameter usage (r0-r3)
         if (reg >= 0 && reg <= 3)
         {
             if (isDestinationRegisterOccurrence(ctx))
             {
+                // If it's the destination, but also read from (like `ADD R0, R1`), it's a parameter
                 if (destinationAlsoRead(ctx))
                 {
                     if (!current.argWritten[reg])
@@ -145,16 +161,18 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
                 return;
             }
 
+            // If a register is read before it's ever written, it MUST be an incoming parameter
             if (!current.argWritten[reg])
             {
                 current.argIsParam[reg] = true;
             }
         }
-
     }
 
-
-
+    /*
+     * Checks if there are gaps in the used parameter registers.
+     * Returns true if r2 is used, but r1 or r0 was skipped.
+     */
     private boolean violatesParamPrefixRule()
     {
         int highest;
@@ -179,15 +197,18 @@ public final class ParamsAAPCSLintListener extends LinterParserBaseListener
         {
             if (!current.argIsParam[i])
             {
-                return true;
+                return true; // Found a gap!
             }
         }
 
         return false;
     }
 
-
-private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext regCtx)
+    /*
+     * Climbs up the AST to figure out if this specific register occurrence is
+     * on the receiving end (destination) of an instruction.
+     */
+    private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext regCtx)
     {
         ParseTree p;
 
@@ -215,7 +236,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return regCtx == ((LinterParser.Mov32InstrContext) p).register();
             }
 
-
             if (p instanceof LinterParser.AdrInstrContext)
             {
                 return regCtx == ((LinterParser.AdrInstrContext) p).register();
@@ -226,10 +246,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return regCtx == ((LinterParser.LdrInstrContext) p).register();
             }
 
-            /*
-                arithmeticInstr:
-                  #ArithmLong / #ArithmShort, destination is labeled field "rd"
-             */
             if (p instanceof LinterParser.ArithmLongContext)
             {
                 return regCtx == ((LinterParser.ArithmLongContext) p).rd;
@@ -240,10 +256,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return regCtx == ((LinterParser.ArithmShortContext) p).rd;
             }
 
-            /*
-                logicInstr:
-                  #LogicLong / #LogicShort, destination is labeled field "rd"
-             */
             if (p instanceof LinterParser.LogicLongContext)
             {
                 return regCtx == ((LinterParser.LogicLongContext) p).rd;
@@ -254,10 +266,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return regCtx == ((LinterParser.LogicShortContext) p).rd;
             }
 
-            /*
-                mulInstr:
-                  #MulLong / #MulShort, destination is labeled field "rd"
-             */
             if (p instanceof LinterParser.MulLongContext)
             {
                 return regCtx == ((LinterParser.MulLongContext) p).rd;
@@ -268,10 +276,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return regCtx == ((LinterParser.MulShortContext) p).rd;
             }
 
-            /*
-                divInstr: DIV register COMMA register (COMMA register)?;
-                first register is destination (unlabeled list => register(0)).
-             */
             if (p instanceof LinterParser.DivInstrContext)
             {
                 LinterParser.DivInstrContext d;
@@ -286,10 +290,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return false;
             }
 
-            /*
-                shiftInstruction:
-                  #ShiftLong / #ShiftShort, destination is labeled field "rd"
-             */
             if (p instanceof LinterParser.ShiftLongContext)
             {
                 return regCtx == ((LinterParser.ShiftLongContext) p).rd;
@@ -300,10 +300,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return regCtx == ((LinterParser.ShiftShortContext) p).rd;
             }
 
-            /*
-                rrxIntrstuction: RRX register COMMA register;
-                destination is the first register.
-             */
             if (p instanceof LinterParser.RrxIntrstuctionContext)
             {
                 LinterParser.RrxIntrstuctionContext r;
@@ -332,12 +328,8 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return false;
             }
 
-
-            /*
-                compInstr (CMP ...) is flags-only => no written destination register.
-                testInstr likewise => no destination register.
-                So we intentionally do NOT treat them as writes.
-             */
+            // CMP and TST only set flags, they don't write data to the register
+            // So we intentionally do NOT treat them as writes here.
 
             p = p.getParent();
         }
@@ -345,8 +337,9 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
         return false;
     }
 
-
-
+    /*
+     * Checks if the register is inside a block like {r0, r1, r2}
+     */
     private boolean isInsideRegList(ParseTree node)
     {
         ParseTree p;
@@ -366,6 +359,10 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
         return false;
     }
 
+    /*
+     * Parses a register list (e.g. from a PUSH command) and adds the extracted
+     * register numbers to a tracking set. Handles ranges like r0-r3 automatically.
+     */
     private void addRegListToSet(LinterParser.RegListContext regList, Set<Integer> out)
     {
         int i;
@@ -389,6 +386,7 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 out.add(lo);
             }
 
+            // If there's a second register, it's a range (e.g., r4-r7)
             if (elem.register().size() > 1)
             {
                 hi = parseRegisterNumber(elem.register(1).getText());
@@ -421,6 +419,9 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
         }
     }
 
+    /*
+     * Helper to turn the string "r4" into the integer 4.
+     */
     private int parseRegisterNumber(String text)
     {
         String s;
@@ -452,16 +453,16 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
         }
     }
 
+    /*
+     * Holds the tracking state for the current function being analyzed.
+     */
     private static final class RoutineState
     {
         private final Token routineLabel;
         private final Set<Integer> savedInPrologue;
         private final Set<Integer> usedCalleeSaved;
 
-        /*
-            argWritten[r] = true if r0..r3 has ever been written as destination in this routine.
-            argIsParam[r] = true if r0..r3 has been read before its first write => inferred parameter.
-         */
+        // Tracks if r0-r3 have been written to or read from to infer if they are parameters
         private final boolean[] argWritten;
         private final boolean[] argIsParam;
 
@@ -475,6 +476,10 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
         }
     }
 
+    /*
+     * Edge case handler: In short-form instructions like "ADD R0, R1", R0 is both
+     * the destination AND a source. We need to know this to properly infer arguments.
+     */
     private boolean destinationAlsoRead(LinterParser.RegisterContext regCtx)
     {
         ParseTree p;
@@ -484,11 +489,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
 
         while (p != null)
         {
-            /*
-                logicInstr:
-                  op=LOGIC rd=register COMMA rn=register COMMA rm=flexop2 #LogicLong
-                  op=LOGIC rd=register COMMA rn=op2                     #LogicShort
-             */
             if (p instanceof LinterParser.LogicLongContext)
             {
                 LinterParser.LogicLongContext l;
@@ -528,11 +528,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return rdText != null && rdText.equalsIgnoreCase(op2.register().getText());
             }
 
-            /*
-                arithmeticInstr:
-                  op=ADDSUB rd=register COMMA rn=register COMMA flexop2 #ArithmLong
-                  op=ADDSUB rd=register COMMA op2                      #ArithmShort
-             */
             if (p instanceof LinterParser.ArithmLongContext)
             {
                 LinterParser.ArithmLongContext a;
@@ -572,11 +567,6 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
                 return rdText != null && rdText.equalsIgnoreCase(op2.register().getText());
             }
 
-            /*
-                shiftInstruction:
-                  op=shift rd=register COMMA rn=register COMMA rm=op2 #ShiftLong
-                  op=shift rd=register COMMA rn=op2                 #ShiftShort
-             */
             if (p instanceof LinterParser.ShiftLongContext)
             {
                 LinterParser.ShiftLongContext s;
@@ -621,6 +611,7 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
 
         return false;
     }
+
     private String formatParamSet(boolean[] params)
     {
         StringBuilder sb;
@@ -733,6 +724,4 @@ private boolean isDestinationRegisterOccurrence(LinterParser.RegisterContext reg
 
         return sb.toString();
     }
-
-
 }

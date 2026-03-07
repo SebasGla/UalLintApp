@@ -3,56 +3,60 @@ package app;
 import antlr4gen.*;
 import org.antlr.v4.runtime.Token;
 
-/**
- * Rule: CONDFLAGS
- * Only set flags (e.g., ADDS/SUBS) when they are tested/branched soon after.
- *
- * Semantics used here:
- * - Track a pending NZCV producer (flag-setting instruction).
- * - It must be consumed by an IT instruction or a conditional branch within LOOKAHEAD instructions.
- * - If flags are overwritten (CMP/TEST or another flag-setting op) before a use, report the producer.
- * - If an unconditional branch occurs while flags are pending, report the producer.
+/*
+ * Linting rule to catch unnecessary condition flags.
+ * If an instruction sets flags (like ADDS or SUBS), those flags must be used
+ * by an IT block or a conditional branch shortly after. If they are overwritten
+ * or abandoned, we warn the user.
  */
 public final class CondFlagsLintListener extends LinterParserBaseListener
 {
 
-    private static final int LOOKAHEAD = 3; // window until the flag has to be consumed
+    // How many instructions we check before deciding the flags were wasted
+    private static final int LOOKAHEAD = 3;
 
     private final DiagnosticCollector diags;
 
-    // pending flag producer
+    // The instruction token that just set the flags (e.g., the ADDS instruction)
     private Token pendingProducer = null;
-    private int remaining = 0;                      // number of future instructions allowed until "use"
+
+    // Countdown until we report the pending producer as unused
+    private int remaining = 0;
 
     public CondFlagsLintListener(DiagnosticCollector diags)
     {
         this.diags = diags;
     }
 
+    /*
+     * Main evaluation hook. Called for every single instruction parsed.
+     * Manages the lifecycle of condition flags: checking if they are used,
+     * overwritten, or abandoned.
+     */
     @Override
     public void exitInstruction(LinterParser.InstructionContext ctx)
     {
-        //If a pendingProducer is already being tracked then decide what the current instruction does to it.
+        // If we are currently tracking an instruction that set the flags...
         if (pendingProducer != null)
         {
-            // Flags are used: IT or conditional branch.
+            // Case 1: The flags are properly used.
             if (isFlagConsumer(ctx))
             {
-                clearPending(); // satisfied; do not report
+                clearPending();
             }
-            //Flags are overwritten: another S-flag instruction or CMP/TEST.
+            // Case 2: The flags are blindly overwritten by another CMP/TEST or 'S' instruction.
             else if (isFlagClobberer(ctx))
             {
                 reportPending("Flags are set but overwritten before being tested/branched after.");
                 clearPending();
             }
-            // Unconditional branch: flags cannot be used anymore because of unconditional jump
+            // Case 3: We jump away unconditionally, abandoning the flags.
             else if (isUnconditionalBranch(ctx))
             {
                 reportPending("Flags are set but control flow leaves before they are tested/branched after.");
                 clearPending();
             }
-            // Otherwise: consume one step of the lookahead window.
+            // Case 4: Not used yet. Tick down the countdown timer.
             else
             {
                 remaining--;
@@ -64,7 +68,7 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
             }
         }
 
-        // After handling the old pending state, see if instruction sets flags.
+        // Check if the current instruction is setting new flags for future instructions
         Token producer = getFlagProducerToken(ctx);
         if (producer != null)
         {
@@ -92,9 +96,9 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
     // Classification functions
     // -------------------------
 
-    /**
-     * Returns a token if the instruction sets NZCV flags (e.g. from ADDS/SUBS).
-     * (You can later extend this to LOGIC+SFLAG, MOV+SFLAG, shifts with S, etc.)
+    /*
+     * Scans the instruction tree to see if it modifies the condition flags.
+     * Looks for the 'S' suffix on arithmetic, logical, and shift operations.
      */
     private static Token getFlagProducerToken(LinterParser.InstructionContext ctx)
     {
@@ -160,7 +164,7 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
         if (ctx.longMultiplyInstr() != null)
         {
             Token t = ctx.longMultiplyInstr().LONGMULTIPLY().getSymbol();
-            // base mnemonic length varies (umull, umlal, smull, smlal) => 5
+            // Base mnemonic length varies for these (umull, umlal, smull, smlal) so we pass 5
             if (hasSFlag(t, 5))
                 return t;
         }
@@ -168,9 +172,9 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
         return null;
     }
 
-    /**
-     * - IT <cond> consumes flags
-     * - conditional branches b<cond>/bl<cond>/bx<cond>/blx<cond> consume flags
+    /*
+     * Determines if an instruction actually reads/consumes the condition flags.
+     * IT blocks and conditional branches are the primary consumers.
      */
     private static boolean isFlagConsumer(LinterParser.InstructionContext ctx)
     {
@@ -213,33 +217,29 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
         return false;
     }
 
-    /**
-     * Clobbers flags (overwrites NZCV) and therefore invalidates a pending producer.
-     * - CMP (cmp/cmn) overwrites flags
-     * - TEST (tst/teq) overwrites flags
-     * - A second flag producer overwrites flags
+    /*
+     * Checks if an instruction overwrites the current flags without using them first.
+     * CMP and TST naturally overwrite flags, as do any other 'S' suffixed instructions.
      */
-
     private static boolean isFlagClobberer(LinterParser.InstructionContext ctx)
     {
 
         if (ctx.compInstr() != null)
         {
-            return true; // CMP/CMN overwrite flags
+            return true; // CMP/CMN overwrite flags immediately
         }
         if (ctx.testInstr() != null)
         {
-            return true; // TST/TEQ overwrite flags
+            return true; // TST/TEQ overwrite flags immediately
         }
 
-        // Another flag producer overwrites flags as well
+        // If it's a completely different instruction that also sets the flags, it clobbers the old ones
         return getFlagProducerToken(ctx) != null;
     }
 
-    /**
-     * Unconditional branch terminates the current linear in consume window.
-     * - b label (no cond suffix) as unconditional branch
-     * - similarly bl/blx/bx/bxj without cond suffix
+    /*
+     * Identifies branches that jump no matter what the condition flags say.
+     * If we hit one of these while holding pending flags, those flags are lost.
      */
     private static boolean isUnconditionalBranch(LinterParser.InstructionContext ctx)
     {
@@ -275,11 +275,9 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
     // Mnemonic text helpers
     // -------------------------
 
-    /**
-     * Checks whether a token text encodes an S-flag right after the base mnemonic.
-     *
-     * @param mnemonicToken the token containing mnemonic(+suffixes)
-     * @param baseLen length of base mnemonic (e.g., add/sub/... are length 3)
+    /*
+     * Helper to parse the raw text of a mnemonic and find the 'S' flag.
+     * We pass in the base length (e.g., 3 for "add") to check the exact character position.
      */
     private static boolean hasSFlag(Token mnemonicToken, int baseLen)
     {
@@ -290,16 +288,16 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
         if (text == null)
             return false;
 
-        text = text.toLowerCase();
+        text = text.toLowerCase(); // Standardize to lowercase for easy checking
         if (text.length() <= baseLen) return false;
 
-        // For UAL in your lexer: opcode + optional 's' + optional cond
+        // Our lexer groups the opcode, optional 's', and optional conditions together
         return text.charAt(baseLen) == 's';
     }
 
-    /**
-     * Your lexer folds {cond} into the mnemonic token text (e.g., "bne", "blt", "bxge").
-     * This checks if the mnemonic has a condition suffix (except "al").
+    /*
+     * Extracts the condition suffix from a branch instruction (e.g., the 'ne' in 'bne').
+     * Explicitly ignores the 'al' (always) suffix since it acts like an unconditional branch.
      */
     private static boolean isConditionalMnemonic(Token mnemonicToken, String baseMnemonic)
     {
@@ -316,7 +314,9 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
         if (!text.startsWith(baseMnemonic))
             return false;
 
-        String suffix = text.substring(baseMnemonic.length()); // "" or "ne" or "al" ...
+        String suffix = text.substring(baseMnemonic.length());
+
+        // No suffix or "al" means it's unconditional
         if (suffix.isEmpty())
             return false;
         if (suffix.equals("al"))
@@ -325,6 +325,9 @@ public final class CondFlagsLintListener extends LinterParserBaseListener
         return true;
     }
 
+    /*
+     * Checks if a branch is unconditional, meaning it has no suffix or explicitly uses 'al'.
+     */
     private static boolean isUnconditionalMnemonic(Token mnemonicToken, String baseMnemonic)
     {
         if (mnemonicToken == null)

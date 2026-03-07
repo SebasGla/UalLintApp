@@ -53,20 +53,24 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Map;
 
+/*
+ * The main JavaFX GUI application for the assembler linter.
+ * Handles the text editor, diagnostic tables, rule toggles, and memory register management.
+ */
 public final class LinterGuiApp extends Application
 {
-    private final CodeArea editor;
-    private final TableView<DiagnosticRow> table;
-    private final Label status;
-    private final Label details;
-    private final TableView<RegisterEntry> registerTable;
+    private final CodeArea editor;                        // Rich text editor component
+    private final TableView<DiagnosticRow> table;         // Table showing lint errors/warnings
+    private final Label status;                           // Bottom status bar text
+    private final Label details;                          // Shows full error message of selected row
+    private final TableView<RegisterEntry> registerTable; // LUT table for custom hardware registers
     private final ObservableList<RegisterEntry> registerRows;
-    private final Path registerStorePath;
-    private final Map<String, CheckBox> ruleCheckboxes;
-    private Integer highlightedLine = null;
+    private final Path registerStorePath;                 // Where the register LUT is saved on disk
+    private final Map<String, CheckBox> ruleCheckboxes;   // Toggles for turning rules on/off
+    private Integer highlightedLine = null;               // Tracks currently highlighted error line
     private static final String LINE_HIGHLIGHT_STYLE = "-fx-background-color: rgba(255, 0, 0, 0.20);";
 
-    private File currentFile;
+    private File currentFile; // The active assembly file loaded in the editor
 
     public LinterGuiApp()
     {
@@ -80,6 +84,10 @@ public final class LinterGuiApp extends Application
         this.ruleCheckboxes = new LinkedHashMap<>();
     }
 
+    /*
+     * Main entry point for the JavaFX UI.
+     * Sets up the layout, buttons, sidebars, and event listeners.
+     */
     @Override
     public void start(Stage stage)
     {
@@ -87,32 +95,24 @@ public final class LinterGuiApp extends Application
         Button runBtn = new Button("Run Lint");
         Button treeBtn = new Button("Parse Tree");
 
-        openBtn.setOnAction(e ->
-        {
-            openFile(stage);
-        });
-
-        runBtn.setOnAction(e ->
-        {
-            runLintAsync();
-        });
-
-        treeBtn.setOnAction(e ->
-        {
-            showParseTree();
-        });
-
+        openBtn.setOnAction(e -> openFile(stage));
+        runBtn.setOnAction(e -> runLintAsync());
+        treeBtn.setOnAction(e -> showParseTree());
 
         ToolBar toolBar = new ToolBar(openBtn, runBtn, treeBtn);
+
+        // Add line numbers to the editor
         editor.setParagraphGraphicFactory(LineNumberFactory.get(editor));
 
         configureTable();
 
+        // Main layout split: Editor on the left, Errors on the right
         SplitPane split = new SplitPane();
         split.getItems().add(new VirtualizedScrollPane<>(editor));
         split.getItems().add(table);
         split.setDividerPositions(0.60);
 
+        // Status bar area
         VBox bottom = new VBox();
         bottom.setSpacing(6);
         bottom.setPadding(new Insets(8));
@@ -126,13 +126,13 @@ public final class LinterGuiApp extends Application
 
         installDragAndDrop(root);
 
+        // Sidebar for settings and registers
         Accordion sidebar = new Accordion();
         sidebar.getPanes().add(buildRegisterTablePane(stage));
-        sidebar.getPanes().add(buildRulesPane()); // NEU: Rules Pane hinzufügen
+        sidebar.getPanes().add(buildRulesPane());
         root.setLeft(sidebar);
 
-
-
+        // Update details text when user clicks a different error in the table
         table.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) ->
         {
             if (newVal == null)
@@ -143,13 +143,10 @@ public final class LinterGuiApp extends Application
             details.setText(newVal.getRuleId() + " [" + newVal.getSeverity() + "]: " + newVal.getMessage() + "  Offending: " + newVal.getOffendingText());
         });
 
+        // Jump to the exact line in the editor when an error is selected
         table.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, row) ->
         {
-            if (row == null)
-            {
-                return;
-            }
-
+            if (row == null) return;
             jumpTo(row.getLine(), row.getColumn());
         });
 
@@ -157,8 +154,8 @@ public final class LinterGuiApp extends Application
         stage.setTitle("ARM ASM Linter");
         stage.setScene(scene);
 
+        // Load custom CSS for the editor (like error highlighting)
         URL css = LinterGuiApp.class.getResource("/editor.css");
-
         if (css != null)
         {
             scene.getStylesheets().add(css.toExternalForm());
@@ -168,21 +165,21 @@ public final class LinterGuiApp extends Application
             System.err.println("editor.css not found on classpath");
         }
 
-
-
         stage.show();
     }
+
+    /*
+     * Sets up drag-and-drop so users can just drop .s/.asm files straight into the app.
+     */
     private void installDragAndDrop(BorderPane root)
     {
         root.setOnDragOver(e ->
         {
             Dragboard db = e.getDragboard();
-
             if (db.hasFiles() == true)
             {
                 e.acceptTransferModes(TransferMode.COPY);
             }
-
             e.consume();
         });
 
@@ -200,9 +197,6 @@ public final class LinterGuiApp extends Application
                     File f = files.get(0);
                     loadFileIntoEditor(f);
                     success = true;
-
-                    // Optional:
-                    // runLintAsync();
                 }
             }
 
@@ -211,10 +205,14 @@ public final class LinterGuiApp extends Application
         });
     }
 
+    /*
+     * Reads the file from disk and pushes the text into the RichTextFX editor.
+     */
     private void loadFileIntoEditor(File f)
     {
         String name = f.getName().toLowerCase();
 
+        // Basic sanity check to ensure it's an assembly file
         if (name.endsWith(".s") == false && name.endsWith(".asm") == false)
         {
             status.setText("Unsupported file type: " + f.getName());
@@ -224,7 +222,6 @@ public final class LinterGuiApp extends Application
         try
         {
             String text = Files.readString(f.toPath());
-
             currentFile = f;
             editor.replaceText(text);
             status.setText("Loaded: " + f.getName());
@@ -235,6 +232,9 @@ public final class LinterGuiApp extends Application
         }
     }
 
+    /*
+     * Sets up the columns and data mapping for the diagnostics table.
+     */
     private void configureTable()
     {
         TableColumn<DiagnosticRow, String> severityCol = new TableColumn<>("Severity");
@@ -243,6 +243,7 @@ public final class LinterGuiApp extends Application
         TableColumn<DiagnosticRow, Integer> colCol = new TableColumn<>("Col");
         TableColumn<DiagnosticRow, String> msgCol = new TableColumn<>("Message");
 
+        // Map columns to the properties in the DiagnosticRow class
         severityCol.setCellValueFactory(new PropertyValueFactory<>("severity"));
         ruleCol.setCellValueFactory(new PropertyValueFactory<>("ruleId"));
         lineCol.setCellValueFactory(new PropertyValueFactory<>("line"));
@@ -264,16 +265,16 @@ public final class LinterGuiApp extends Application
         table.setItems(FXCollections.observableArrayList());
     }
 
+    /*
+     * Shows a standard OS file picker to load an assembly file.
+     */
     private void openFile(Stage stage)
     {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Open Assembly File");
         File f = chooser.showOpenDialog(stage);
 
-        if (f == null)
-        {
-            return;
-        }
+        if (f == null) return;
 
         currentFile = f;
 
@@ -289,6 +290,10 @@ public final class LinterGuiApp extends Application
         }
     }
 
+    /*
+     * Executes the linter in a background thread.
+     * Running heavy parsing on the main thread would freeze the UI, so we use a JavaFX Task.
+     */
     private void runLintAsync()
     {
         if (currentFile == null)
@@ -300,7 +305,7 @@ public final class LinterGuiApp extends Application
         status.setText("Running lint...");
         table.getItems().clear();
 
-        // NEU: Ausgewählte Regeln sammeln
+        // Collect which rules the user has actually checked on the sidebar
         List<String> enabledRules = new ArrayList<>();
         for (Map.Entry<String, CheckBox> entry : ruleCheckboxes.entrySet())
         {
@@ -310,6 +315,7 @@ public final class LinterGuiApp extends Application
             }
         }
 
+        // Background task definition
         Task<List<DiagnosticRow>> task = new Task<>()
         {
             @Override
@@ -320,16 +326,19 @@ public final class LinterGuiApp extends Application
                         editor.getText(),
                         currentFile.getName(),
                         addrToName,
-                        enabledRules // NEU: Parameter übergeben
+                        enabledRules
                 );
             }
         };
+
+        // Update UI when finished
         task.setOnSucceeded(e ->
         {
             table.getItems().setAll(task.getValue());
             status.setText("Done. Diagnostics: " + task.getValue().size());
         });
 
+        // Handle crashes gracefully
         task.setOnFailed(e ->
         {
             Throwable ex = task.getException();
@@ -337,13 +346,16 @@ public final class LinterGuiApp extends Application
         });
 
         Thread t = new Thread(task);
-        t.setDaemon(true);
+        t.setDaemon(true); // Don't block app shutdown
         t.start();
     }
 
+    /*
+     * Scrolls the editor to the specified line/column and highlights it.
+     */
     private void jumpTo(int line, int column)
     {
-        int paragraph = Math.max(line - 1, 0);
+        int paragraph = Math.max(line - 1, 0); // JavaFX paragraphs are 0-indexed
         int col = Math.max(column - 1, 0);
 
         clearPreviousHighlight();
@@ -355,12 +367,18 @@ public final class LinterGuiApp extends Application
         highlightLine(paragraph);
     }
 
+    /*
+     * Applies a CSS class to the specific line to visually flag an error.
+     */
     private void highlightLine(int paragraph)
     {
         editor.setParagraphStyle(paragraph, List.of("lint-line-highlight"));
         highlightedLine = paragraph;
     }
 
+    /*
+     * Removes the error highlight from the previously selected line.
+     */
     private void clearPreviousHighlight()
     {
         if (highlightedLine != null)
@@ -370,6 +388,10 @@ public final class LinterGuiApp extends Application
         }
     }
 
+    /*
+     * Opens ANTLR's built-in GUI visualizer to show the raw parse tree.
+     * Excellent for debugging grammar issues.
+     */
     private void showParseTree()
     {
         try
@@ -388,6 +410,10 @@ public final class LinterGuiApp extends Application
         }
     }
 
+    /*
+     * Builds the UI panel that lets users define custom memory-mapped registers.
+     * Crucial for linters to know which magic numbers correspond to hardware features.
+     */
     private TitledPane buildRegisterTablePane(Stage stage)
     {
         loadRegisterRows();
@@ -425,15 +451,8 @@ public final class LinterGuiApp extends Application
         Button addBtn = new Button("Add");
         Button removeBtn = new Button("Remove");
 
-        importBtn.setOnAction(e ->
-        {
-            importRegisterCsv(stage);
-        });
-
-        exportBtn.setOnAction(e ->
-        {
-            exportRegisterCsv(stage);
-        });
+        importBtn.setOnAction(e -> importRegisterCsv(stage));
+        exportBtn.setOnAction(e -> exportRegisterCsv(stage));
 
         addBtn.setOnAction(e ->
         {
@@ -444,7 +463,6 @@ public final class LinterGuiApp extends Application
         removeBtn.setOnAction(e ->
         {
             RegisterEntry sel = registerTable.getSelectionModel().getSelectedItem();
-
             if (sel != null)
             {
                 registerRows.remove(sel);
@@ -464,12 +482,18 @@ public final class LinterGuiApp extends Application
         return pane;
     }
 
+    /*
+     * Loads saved register mappings from a local file.
+     */
     private void loadRegisterRows()
     {
         registerRows.clear();
         registerRows.addAll(RegisterTableStore.load(registerStorePath));
     }
 
+    /*
+     * Saves the current register mappings to disk so they persist between sessions.
+     */
     private void saveRegisterRows()
     {
         RegisterTableStore.save(registerStorePath, new ArrayList<>(registerRows));
@@ -483,10 +507,7 @@ public final class LinterGuiApp extends Application
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV", "*.csv"));
         File f = chooser.showOpenDialog(stage);
 
-        if (f == null)
-        {
-            return;
-        }
+        if (f == null) return;
 
         List<RegisterEntry> loaded = RegisterTableStore.load(f.toPath());
         registerRows.setAll(loaded);
@@ -500,28 +521,22 @@ public final class LinterGuiApp extends Application
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV", "*.csv"));
         File f = chooser.showSaveDialog(stage);
 
-        if (f == null)
-        {
-            return;
-        }
+        if (f == null) return;
 
         RegisterTableStore.save(f.toPath(), new ArrayList<>(registerRows));
         status.setText("Exported: " + f.getName());
     }
 
+    /*
+     * Ensures addresses entered by the user are properly formatted as hex.
+     * Converts "1A" to "0x1A" automatically.
+     */
     private String normalizeAddress(String s)
     {
-        if (s == null)
-        {
-            return "0x00000000";
-        }
+        if (s == null) return "0x00000000";
 
         String t = s.trim();
-
-        if (t.isEmpty() == true)
-        {
-            return "0x00000000";
-        }
+        if (t.isEmpty() == true) return "0x00000000";
 
         if (t.startsWith("0x") == false && t.startsWith("0X") == false)
         {
@@ -534,39 +549,29 @@ public final class LinterGuiApp extends Application
         return t;
     }
 
+    /*
+     * Converts the UI table of registers into a highly efficient Map (LUT).
+     * The linter uses this during execution to quickly look up memory addresses.
+     */
     private Map<Long, String> buildAddrToNameLut()
     {
         Map<Long, String> m = new HashMap<>();
 
         for (RegisterEntry r : registerRows)
         {
-            if (r == null)
-            {
-                continue;
-            }
+            if (r == null) continue;
 
             String name = r.getRegisterName();
             String addrText = r.getAddress();
 
             Long addr = tryParseHexAddress(addrText);
 
-            if (addr == null)
-            {
-                continue;
-            }
-
-            if (name == null)
-            {
-                continue;
-            }
+            if (addr == null || name == null) continue;
 
             String trimmedName = name.trim();
+            if (trimmedName.isEmpty() == true) continue;
 
-            if (trimmedName.isEmpty() == true)
-            {
-                continue;
-            }
-
+            // Don't overwrite if multiple names point to the same address; keep the first one
             if (m.containsKey(addr) == false)
             {
                 m.put(addr, trimmedName);
@@ -576,29 +581,23 @@ public final class LinterGuiApp extends Application
         return m;
     }
 
+    /*
+     * Safely attempts to parse a hex string into a numeric Long.
+     * Returns null if the user typed garbage instead of crashing the app.
+     */
     private Long tryParseHexAddress(String s)
     {
-        if (s == null)
-        {
-            return null;
-        }
+        if (s == null) return null;
 
         String t = s.trim();
-
-        if (t.isEmpty() == true)
-        {
-            return null;
-        }
+        if (t.isEmpty() == true) return null;
 
         if (t.startsWith("0x") == true || t.startsWith("0X") == true)
         {
             t = t.substring(2);
         }
 
-        if (t.isEmpty() == true)
-        {
-            return null;
-        }
+        if (t.isEmpty() == true) return null;
 
         try
         {
@@ -615,13 +614,17 @@ public final class LinterGuiApp extends Application
         launch(args);
     }
 
+    /*
+     * Builds the sidebar panel containing toggles for every single linting rule.
+     * Allows the user to silence rules they don't care about.
+     */
     private TitledPane buildRulesPane()
     {
         VBox box = new VBox();
         box.setSpacing(8);
         box.setPadding(new Insets(8));
 
-        // Namen der Regeln (basierend auf deinen Listenern in LinterRunner)
+        // Hardcoded list of all available rules
         String[] rules = {
                 "BlankEof", "ItBlock", "CondFlags", "ImmediateHash",
                 "AbsoluteAddress", "ShortInstructionForm", "ShiftPow2", "ThumbFunc",
@@ -632,7 +635,7 @@ public final class LinterGuiApp extends Application
         for (String rule : rules)
         {
             CheckBox cb = new CheckBox(rule);
-            cb.setSelected(true); // Standardmäßig sind alle Regeln an
+            cb.setSelected(true); // Default to having all rules turned on
             ruleCheckboxes.put(rule, cb);
             box.getChildren().add(cb);
         }

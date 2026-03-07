@@ -9,13 +9,19 @@ import org.antlr.v4.runtime.tree.ParseTree;
 
 import java.util.List;
 
+/*
+ * Linting rule to ensure the .thumb_func directive is used before routine labels.
+ * This is vital for ARM/Thumb interworking. Since the parser relies on this directive
+ * to identify function blocks, missing it can cause routines to be "swallowed"
+ * by the previous function's body.
+ */
 public final class ThumbFuncLintListener extends LinterParserBaseListener
 {
 
     private static final Rules ruleId = Rules.ThumbFunc;
 
     private final DiagnosticCollector diags;
-    private final List<Token> tokens;
+    private final List<Token> tokens; // The full list of tokens for looking backwards/forwards
 
     public ThumbFuncLintListener(DiagnosticCollector diags, CommonTokenStream tokenStream)
     {
@@ -23,18 +29,25 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         this.tokens = tokenStream.getTokens();
     }
 
+    /*
+     * Checks if a PUSH instruction that saves the Link Register (LR) is missing a .thumb_func.
+     * If we see a "push {lr}" outside of a recognized routine, it's a strong sign
+     * that a .thumb_func was forgotten above the nearest label.
+     */
     @Override
     public void exitPush(LinterParser.PushContext ctx)
     {
         Token pushToken;
-        int pushIndex;
-        int labelIndex;
+        int pushIndex;  // Position of the push in the token stream
+        int labelIndex; // Position of the nearest label above the push
 
+        // If the parser already knows this is a routine, we don't need to check here
         if (isInsideRoutine(ctx))
         {
             return;
         }
 
+        // We only care about pushes that save the LR (standard routine prologue)
         if (!pushContainsLr(ctx))
         {
             return;
@@ -43,6 +56,7 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         pushToken = ctx.getStart();
         pushIndex = pushToken.getTokenIndex();
 
+        // Walk backwards to find the label this push belongs to
         labelIndex = findNearestLabelDefAbove(pushIndex);
 
         if (labelIndex < 0)
@@ -50,12 +64,18 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
             return;
         }
 
+        // Error if that label doesn't have the required directive directly above it
         if (!hasThumbFuncDirectlyAboveLabel(labelIndex))
         {
             diags.report(ruleId, Severity.ERROR, pushToken, "Missing .thumb_func before routine label (detected via push {.., lr}).");
         }
     }
 
+    /*
+     * Checks if a 'bx lr' return is missing a .thumb_func.
+     * Similar to the push check, if we find a return outside a routine,
+     * it means the function boundaries were never established.
+     */
     @Override
     public void exitBranch(LinterParser.BranchContext ctx)
     {
@@ -78,6 +98,7 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
             return;
         }
 
+        // Only care about 'bx lr' (the standard return instruction)
         if (!"lr".equalsIgnoreCase(ctx.register().getText()))
         {
             return;
@@ -86,12 +107,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         bxToken = ctx.getStart();
         bxIndex = bxToken.getTokenIndex();
 
-        /*
-            Guard: do not flag if bx lr is associated with a label that has a proper .thumb_func above it.
-            This avoids false positives when bx lr is parsed as normal branch.
-         */
         labelIndex = findNearestLabelDefAbove(bxIndex);
 
+        // If we found a label and it HAS a .thumb_func, then it's a valid return
         if (labelIndex >= 0 && hasThumbFuncDirectlyAboveLabel(labelIndex))
         {
             return;
@@ -100,16 +118,19 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         diags.report(ruleId, Severity.ERROR, bxToken, "Missing .thumb_func before routine label (detected via bx lr).");
     }
 
+    /*
+     * Heuristic check for "swallowed" routines.
+     * Sometimes a label appears INSIDE a routine. If that label is followed
+     * by a push and a return, it's almost certainly a new routine that
+     * the parser accidentally included in the previous one because of a missing directive.
+     */
     @Override
     public void exitLabelDef(LinterParser.LabelDefContext ctx)
     {
         Token labelToken;
         int labelIndex;
 
-        /*
-            Only run this heuristic for labels that occur INSIDE a parsed .thumb_func routine body.
-            These are candidates for being "swallowed" routine starts (like bad_routine4:).
-         */
+        // This check only applies to labels that the parser thinks are "inner" labels
         if (!isInsideRoutine(ctx))
         {
             return;
@@ -118,29 +139,28 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         labelToken = ctx.getStart();
         labelIndex = labelToken.getTokenIndex();
 
-        /*
-            If this inner label already has a .thumb_func above it, it is fine.
-         */
         if (hasThumbFuncDirectlyAboveLabel(labelIndex))
         {
             return;
         }
 
-        /*
-            Heuristic: label inside a routine that is followed by a push and later a bx lr
-            is likely the start of a second routine that got swallowed by the grammar.
-         */
+        // If it looks like a function (push... return) but is missing the directive, warn the user
         if (looksLikeSwallowedRoutine(labelIndex))
         {
             diags.report(ruleId, Severity.WARNING, labelToken, " Possible missing .thumb_func before routine label (manual check needed).");
         }
     }
 
+    /*
+     * Scans the tokens following a label to see if it acts like a function.
+     * It looks for a PUSH followed by a BX LR before hitting the next label.
+     */
     private boolean looksLikeSwallowedRoutine(int labelIndex)
     {
         int nextPushIndex;
         int bxIndex;
 
+        // Look ahead for a PUSH instruction
         nextPushIndex = findNextTokenOfTypeAfter(labelIndex, LinterLexer.PUSH, 50);
 
         if (nextPushIndex < 0)
@@ -148,17 +168,13 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
             return false;
         }
 
-        /*
-            Require that the push occurs before the next label (otherwise it might belong to another block).
-         */
+        // Ensure we haven't crossed into another labeled block already
         if (existsLabelBetween(labelIndex, nextPushIndex))
         {
             return false;
         }
 
-        /*
-            Require a bx lr after the push, before the next label. This catches your bad_routine4 form.
-         */
+        // Look for the return 'bx lr' after the push
         bxIndex = findNextBxLrAfter(nextPushIndex, 300);
 
         if (bxIndex < 0)
@@ -174,6 +190,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return true;
     }
 
+    /*
+     * Helper to find the next return instruction in the token stream.
+     */
     private int findNextBxLrAfter(int fromIndexExclusive, int maxLookaheadTokens)
     {
         int i;
@@ -195,6 +214,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return -1;
     }
 
+    /*
+     * Verifies if a specific branch instruction is actually targeting the Link Register.
+     */
     private boolean isBxLrAtIndex(int branchxIndex)
     {
         int i;
@@ -207,6 +229,7 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         {
             tok = tokens.get(i);
 
+            // If we hit a new label before finding 'lr', this wasn't a return for this block
             if (tok.getType() == LinterLexer.LABEL_DEF)
             {
                 return false;
@@ -221,6 +244,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return false;
     }
 
+    /*
+     * Checks if any labels exist in a specific range of tokens.
+     */
     private boolean existsLabelBetween(int fromIndexExclusive, int toIndexExclusive)
     {
         int i;
@@ -236,6 +262,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return false;
     }
 
+    /*
+     * General lookahead helper to find a specific token type.
+     */
     private int findNextTokenOfTypeAfter(int fromIndexExclusive, int tokenType, int maxLookaheadTokens)
     {
         int i;
@@ -254,6 +283,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return -1;
     }
 
+    /*
+     * Utility to check if a node is part of a routine branch in the parse tree.
+     */
     private boolean isInsideRoutine(ParseTree node)
     {
         ParseTree p;
@@ -273,6 +305,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return false;
     }
 
+    /*
+     * Walks backward through the token stream to find the closest label definition.
+     */
     private int findNearestLabelDefAbove(int fromIndexExclusive)
     {
         int i;
@@ -282,6 +317,7 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         {
             t = tokens.get(i);
 
+            // Only check the main code channel (ignore comments/whitespace)
             if (t.getChannel() != Token.DEFAULT_CHANNEL)
             {
                 continue;
@@ -296,6 +332,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return -1;
     }
 
+    /*
+     * Verifies if the .thumb_func directive is present exactly one slot above a label.
+     */
     private boolean hasThumbFuncDirectlyAboveLabel(int labelIndex)
     {
         int prevIndex;
@@ -310,6 +349,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return tokens.get(prevIndex).getType() == LinterLexer.THUMBFUNC;
     }
 
+    /*
+     * Skips hidden tokens (whitespace/comments) to find the actual previous instruction.
+     */
     private int findPreviousDefaultChannelTokenIndex(int fromIndexExclusive)
     {
         int i;
@@ -325,6 +367,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return -1;
     }
 
+    /*
+     * Checks if the PUSH instruction includes the Link Register.
+     */
     private boolean pushContainsLr(LinterParser.PushContext ctx)
     {
         if (ctx == null || ctx.regList() == null)
@@ -335,6 +380,9 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         return regListContainsLr(ctx.regList());
     }
 
+    /*
+     * Scans a register list block for the 'lr' keyword.
+     */
     private boolean regListContainsLr(LinterParser.RegListContext regList)
     {
         int i;
@@ -353,6 +401,7 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
                 return true;
             }
 
+            // Check the upper bound of a range (e.g. {r0-lr})
             if (elem.register().size() > 1)
             {
                 t2 = elem.register(1).getText();

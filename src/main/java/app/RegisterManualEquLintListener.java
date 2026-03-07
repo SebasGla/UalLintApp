@@ -7,24 +7,36 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+/*
+ * Linting rule to ensure user-defined constants match the hardware register LUT.
+ * If a developer types `.equ MY_UART, 0x4000`, this checks if 0x4000 is actually
+ * registered as something else (like "UART_RX"), or if "MY_UART" is registered
+ * to a completely different address. Prevents nasty hardware-level typos.
+ */
 public final class RegisterManualEquLintListener extends LinterParserBaseListener
 {
     private static final Rules ruleId = Rules.RegisterFromManualEqu;
 
     private final DiagnosticCollector diags;
-    private final Map<Long, String> addrToName;
-    private final Map<String, Long> nameToAddr;
+    private final Map<Long, String> addrToName; // Fast lookup: "What is at 0x4000?"
+    private final Map<String, Long> nameToAddr; // Fast lookup: "Where is UART_RX?"
 
     public RegisterManualEquLintListener(DiagnosticCollector diags, Map<Long, String> addrToName)
     {
         this.diags = diags;
         this.addrToName = (addrToName != null) ? addrToName : Map.of();
+
+        // Build the reverse lookup table right away so we can easily check Name -> Address
         this.nameToAddr = buildReverseMap(this.addrToName);
     }
 
+    /*
+     * Intercepts every `.equ NAME, VALUE` directive in the code.
+     */
     @Override
     public void exitEquDirective(LinterParser.EquDirectiveContext ctx)
     {
+        // Safety check to ensure the parser actually found a label name
         if (ctx.ID() == null)
         {
             System.out.println("BAD EQU near line " + ctx.getStart().getLine() + ": " + ctx.getText());
@@ -46,6 +58,7 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         Token nameTok = ctx.ID().getSymbol();
         String actualName = safeText(nameTok);
 
+        // Try to read the address. Note: This rule only checks plain hex values right now.
         Long addr = tryParsePlainHexAddress(ctx.constExpr());
 
         if (addr == null)
@@ -56,10 +69,12 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         // -----------------------------
         // (1) Address -> Name check
         // -----------------------------
+        // The developer used a specific memory address. Does our LUT know what it is?
         String expectedNameForAddr = addrToName.get(addr);
 
         if (expectedNameForAddr != null)
         {
+            // The address is in our LUT, but they named it something else!
             if (!equalsIgnoreCase(actualName, expectedNameForAddr))
             {
                 diags.report(
@@ -80,10 +95,12 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         // -----------------------------
         // (2) Name -> Address check
         // -----------------------------
+        // The developer used a name that exists in our LUT. Did they point it to the right place?
         Long expectedAddrForName = nameToAddr.get(normalizeName(actualName));
 
         if (expectedAddrForName != null)
         {
+            // The name is right, but the hex address is completely wrong!
             if (!expectedAddrForName.equals(addr))
             {
                 diags.report(
@@ -102,6 +119,10 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         }
     }
 
+    /*
+     * Parses the constant expression, but only if it's a simple, raw hex string (e.g., 0x4000).
+     * We don't try to evaluate complex math here, as that is handled by other rules.
+     */
     private static Long tryParsePlainHexAddress(LinterParser.ConstExprContext expr)
     {
         if (expr == null)
@@ -116,6 +137,7 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
             return null;
         }
 
+        // Strip out any formatting underscores (e.g., 0x4000_0000)
         t = t.trim().replace("_", "");
 
         if (t.startsWith("0x") == false && t.startsWith("0X") == false)
@@ -140,8 +162,10 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         }
     }
 
-
-
+    /*
+     * Flips the Address->Name map into a Name->Address map.
+     * Lowercases the keys to make lookups case-insensitive.
+     */
     private static Map<String, Long> buildReverseMap(Map<Long, String> addrToName)
     {
         Map<String, Long> m = new HashMap<>();
@@ -168,7 +192,7 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
                 continue;
             }
 
-            // first one wins (avoid flapping if LUT has duplicates)
+            // First one wins (prevents crashing if the LUT has duplicate names)
             if (!m.containsKey(key))
             {
                 m.put(key, addr);
@@ -220,6 +244,9 @@ public final class RegisterManualEquLintListener extends LinterParserBaseListene
         return s;
     }
 
+    /*
+     * Helper to pretty-print memory addresses in the error messages.
+     */
     private static String formatHex(long v)
     {
         return "0x" + Long.toHexString(v).toUpperCase(Locale.ROOT);

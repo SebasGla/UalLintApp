@@ -7,25 +7,19 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
-/**
- * Rule: SHIFTPOW2
- * Multiplication/division by 2^n must use shifts.
- *
- * Implementation:
- * - Track simple constant bindings: a register is known to hold an integer constant
- *   if it is defined by mov/movw/ldr-literal with a fully evaluable constExpr.
- * - If mul / udiv / sdiv uses such a register as multiplier/divisor and that constant is 2^n,
- *   report and propose the equivalent shift.
- *
- * Limitations (intentional):
- * - No interprocedural or full dataflow tracking.
- * - Constant bindings expire after a small TTL to reduce false positives.
+/*
+ * Linting rule that catches multiplication or division by a power of two.
+ * It suggests using bit-shifts (LSL, LSR, ASR) instead, which are faster and more efficient.
+ * It uses a simple tracking system to remember which registers hold constants across a few lines.
  */
 public final class ShiftPow2LintListener extends LinterParserBaseListener
 {
+    // How many instructions a constant "lives" before we forget it to avoid false positives
     private static final int CONST_TTL = 2;
 
     private final DiagnosticCollector diags;
+
+    // Map of register names to their current known constant values
     private final Map<String, ConstBinding> constRegs = new HashMap<>();
 
     public ShiftPow2LintListener(DiagnosticCollector diags)
@@ -33,12 +27,16 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         this.diags = diags;
     }
 
+    /*
+     * Main hook for every instruction.
+     * Handles the lifecycle of constants: checking usage, clearing overwrites, and learning new values.
+     */
     @Override
     public void exitInstruction(LinterParser.InstructionContext ctx)
     {
-        decayConstants();
+        decayConstants(); // Age all known constants by one step
 
-        // 1) check for violations using current environment
+        // 1) See if the current instruction is a MUL or DIV using a known power-of-two constant
         if (ctx.mulInstr() != null)
         {
             checkMul(ctx.mulInstr());
@@ -49,10 +47,10 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
             checkDiv(ctx.divInstr());
         }
 
-        // 2) clobber first (kills previous binding)
+        // 2) If this instruction writes to a register, we must clear any old constant we had for it
         clobberWrittenRegister(ctx);
 
-        // 3) then learn from the instruction (creates new binding)
+        // 3) Try to learn new constants from MOV, MOVW, or LDR instructions
         if (ctx.movInstr() != null)
         {
             learnFromMov(ctx.movInstr());
@@ -73,6 +71,9 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
     // Checks
     // -------------------------
 
+    /*
+     * Analyzes multiplication instructions to see if either operand is a power of two.
+     */
     private void checkMul(LinterParser.MulInstrContext mul)
     {
         if (!(mul instanceof LinterParser.MulLongContext))
@@ -87,11 +88,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         String rn = lower(m.rn.getText());
         String rm = lower(m.rm.getText());
 
-        // Prefer rm as the scaling factor
+        // Check if the second operand (rm) is a known power of 2
         ConstBinding c = constRegs.get(rm);
         if (c != null && isPow2(c.value))
         {
-            int sh = log2(c.value);
+            int sh = log2(c.value); // Convert value to shift amount (e.g., 4 -> 2)
             String suggested = "lsl " + rd + ", " + rn + ", #" + sh;
 
             diags.report(Rules.ShiftPow2, Severity.WARNING, opTok,
@@ -101,7 +102,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
             return;
         }
 
-        // Also check rn (mul is commutative)
+        // Also check rn since multiplication is commutative
         c = constRegs.get(rn);
         if (c != null && isPow2(c.value))
         {
@@ -115,9 +116,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         }
     }
 
+    /*
+     * Analyzes division instructions to see if the divisor is a power of two.
+     */
     private void checkDiv(LinterParser.DivInstrContext div)
     {
-        // divInstr: DIV register COMMA register (COMMA register)?;
         Token opTok = div.getStart();
         String mnemonic = lower(opTok.getText());
 
@@ -128,10 +131,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         String rn = lower(div.register(1).getText());
         String rm;
 
+        // DIV usually needs 3 operands to provide a clean "shift" suggestion
         if (div.register().size() >= 3)
             rm = lower(div.register(2).getText());
         else
-            return; // require 3-operand form for a clear suggestion
+            return;
 
         ConstBinding c = constRegs.get(rm);
         if (c == null)
@@ -142,6 +146,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
 
         int sh = log2(c.value);
 
+        // UDIV (Unsigned) maps directly to LSR (Logical Shift Right)
         if (mnemonic.startsWith("udiv"))
         {
             String suggested = "lsr " + rd + ", " + rn + ", #" + sh;
@@ -153,6 +158,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
             return;
         }
 
+        // SDIV (Signed) maps to ASR (Arithmetic Shift Right)
         if (mnemonic.startsWith("sdiv"))
         {
             String suggested = "asr " + rd + ", " + rn + ", #" + sh;
@@ -168,10 +174,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
     // Learning constants
     // -------------------------
 
+    /*
+     * Extracts constants from MOV instructions (e.g., MOV R1, #4).
+     */
     private void learnFromMov(LinterParser.MovInstrContext mov)
     {
-        // movInstr: MOV register COMMA flexop2;
-        // Learn only: mov rd, immediate (hash or missing-hash) or mov rd, constExpr
         String rd = lower(mov.register().getText());
 
         Integer v = extractConstFromFlexop2(mov.flexop2());
@@ -181,9 +188,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         constRegs.put(rd, new ConstBinding(v, CONST_TTL));
     }
 
+    /*
+     * Extracts constants from MOVW (Move Wide) instructions.
+     */
     private void learnFromMovw(LinterParser.MovwInstrContext movw)
     {
-        // movwInstr: MOVW register COMMA immediate;
         String rd = lower(movw.register().getText());
 
         Integer v = extractConstFromImmediate(movw.immediate());
@@ -193,11 +202,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         constRegs.put(rd, new ConstBinding(v, CONST_TTL));
     }
 
+    /*
+     * Extracts constants from LDR literal loads (e.g., LDR R1, =4).
+     */
     private void learnFromLdrLiteral(LinterParser.LdrInstrContext ldr)
     {
-        // ldrInstr: LDR register COMMA (nondwordOption | ...);
-        // nondwordOption: (literal | immediate)
-        // literal: ASSIGN constExpr;     // ldr rt, =constExpr
         if (ldr.nondwordOption() == null)
             return;
 
@@ -216,6 +225,9 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
     // Clobbering / lifetime
     // -------------------------
 
+    /*
+     * Removes a register from our constant map if an instruction overwrites it.
+     */
     private void clobberWrittenRegister(LinterParser.InstructionContext ctx)
     {
         String written = getWrittenRegister(ctx);
@@ -225,9 +237,11 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         constRegs.remove(written);
     }
 
+    /*
+     * Identifies which register an instruction writes to.
+     */
     private static String getWrittenRegister(LinterParser.InstructionContext ctx)
     {
-        // Minimal conservative set; expand if needed.
         if (ctx.movInstr() != null)
             return lower(ctx.movInstr().register().getText());
 
@@ -239,7 +253,6 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
 
         if (ctx.mulInstr() != null)
         {
-            // mulInstr: op=MUL rd=register ...
             if (ctx.mulInstr() instanceof LinterParser.MulLongContext)
                 return lower(((LinterParser.MulLongContext) ctx.mulInstr()).rd.getText());
             if (ctx.mulInstr() instanceof LinterParser.MulShortContext)
@@ -252,6 +265,10 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         return null;
     }
 
+    /*
+     * Reduces the TTL of all active constant bindings.
+     * If a constant isn't used within a few lines, we forget it.
+     */
     private void decayConstants()
     {
         Iterator<Map.Entry<String, ConstBinding>> it = constRegs.entrySet().iterator();
@@ -265,7 +282,7 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
     }
 
     // -------------------------
-    // Constant extraction / evaluation (based on your grammar)
+    // Constant extraction / evaluation
     // -------------------------
 
     private static Integer extractConstFromFlexop2(LinterParser.Flexop2Context flex)
@@ -273,8 +290,6 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         if (flex == null)
             return null;
 
-        // flexop2: op2 | (register (COMMA shiftOperand))?;
-        // We only accept the op2 branch, and only if it evaluates to a numeric constant.
         if (flex.op2() == null)
             return null;
 
@@ -300,7 +315,6 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         if (imm == null)
             return null;
 
-        // immediate: HASH constExpr #ImmediateHash | constExpr #ImmediateMissingHash ;
         if (imm instanceof LinterParser.ImmediateHashContext)
             return evalConstExpr(((LinterParser.ImmediateHashContext) imm).constExpr());
 
@@ -310,9 +324,9 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         return null;
     }
 
-    /**
-     * Evaluates constExpr if it is purely numeric (INT/INT_HEX/INT_BIN and operations).
-     * If any ID/STRING is involved, returns null.
+    /*
+     * Recursively evaluates a constant expression (e.g., 2 + 2) into a numeric integer.
+     * Returns null if the expression involves symbols or labels that we can't resolve.
      */
     private static Integer evalConstExpr(LinterParser.ConstExprContext ctx)
     {
@@ -336,12 +350,9 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
                 return null;
 
             String t = op.getText();
-            if (t.equals("+"))
-                return v;
-            if (t.equals("-"))
-                return -v;
-            if (t.equals("~"))
-                return ~v;
+            if (t.equals("+")) return v;
+            if (t.equals("-")) return -v;
+            if (t.equals("~")) return ~v;
 
             return null;
         }
@@ -388,10 +399,12 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
                     ((LinterParser.ConstOrContext) ctx).constExpr(1));
         }
 
-        // Equality/relational exist in grammar; not meaningful for constant values in this rule.
         return null;
     }
 
+    /*
+     * Base case for constant evaluation: parses raw numbers in decimal, hex, or binary.
+     */
     private static Integer evalConstPrimary(LinterParser.ConstPrimaryContext p)
     {
         if (p == null)
@@ -403,21 +416,20 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         if (p.INT_HEX() != null)
         {
             String s = p.INT_HEX().getText();
-            s = s.substring(2); // strip 0x / 0X
+            s = s.substring(2); // Strip the 0x prefix
             return parseIntSafe(s, 16);
         }
 
         if (p.INT_BIN() != null)
         {
             String s = p.INT_BIN().getText();
-            s = s.substring(2); // strip 0b / 0B
+            s = s.substring(2); // Strip the 0b prefix
             return parseIntSafe(s, 2);
         }
 
         if (p.LPAREN() != null && p.constExpr() != null)
             return evalConstExpr(p.constExpr());
 
-        // ID / STRING => not evaluable
         return null;
     }
 
@@ -434,13 +446,10 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
             if (op.equals("*")) return x * y;
             if (op.equals("/")) return y == 0 ? null : x / y;
             if (op.equals("%")) return y == 0 ? null : x % y;
-
             if (op.equals("+")) return x + y;
             if (op.equals("-")) return x - y;
-
             if (op.equals("<<")) return x << y;
             if (op.equals(">>")) return x >> y;
-
             if (op.equals("&")) return x & y;
             if (op.equals("^")) return x ^ y;
             if (op.equals("|")) return x | y;
@@ -494,6 +503,9 @@ public final class ShiftPow2LintListener extends LinterParserBaseListener
         return s.toLowerCase();
     }
 
+    /*
+     * Internal container to hold a register's constant value and its remaining "life" (TTL).
+     */
     private static final class ConstBinding
     {
         private final int value;
