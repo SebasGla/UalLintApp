@@ -41,12 +41,6 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
         int pushIndex;  // Position of the push in the token stream
         int labelIndex; // Position of the nearest label above the push
 
-        // If the parser already knows this is a routine, we don't need to check here
-        if (isInsideRoutine(ctx))
-        {
-            return;
-        }
-
         // We only care about pushes that save the LR (standard routine prologue)
         if (!pushContainsLr(ctx))
         {
@@ -153,65 +147,119 @@ public final class ThumbFuncLintListener extends LinterParserBaseListener
 
     /*
      * Scans the tokens following a label to see if it acts like a function.
-     * It looks for a PUSH followed by a BX LR before hitting the next label.
+     * It checks if the block ends in a return and follows an existing dead-code path,
+     * or if it has an explicit PUSH before returning.
      */
     private boolean looksLikeSwallowedRoutine(int labelIndex)
     {
-        int nextPushIndex;
-        int bxIndex;
+        int returnIndex = findNextReturnAfter(labelIndex, 50);
 
-        // Look ahead for a PUSH instruction
-        nextPushIndex = findNextTokenOfTypeAfter(labelIndex, LinterLexer.PUSH, 50);
-
-        if (nextPushIndex < 0)
+        if (returnIndex >= 0 && !existsLabelBetween(labelIndex, returnIndex))
         {
-            return false;
+            // If the preceding instruction was a return/unconditional jump,
+            // control flow is dead. This label is highly likely a new routine entry point.
+            if (isFollowingDeadCode(labelIndex))
+            {
+                return true;
+            }
+
+            // Alternatively, if there is a PUSH before the return, it's a routine
+            int nextPushIndex = findNextTokenOfTypeAfter(labelIndex, LinterLexer.PUSH, 50);
+            if (nextPushIndex >= 0 && nextPushIndex < returnIndex)
+            {
+                return true;
+            }
         }
 
-        // Ensure we haven't crossed into another labeled block already
-        if (existsLabelBetween(labelIndex, nextPushIndex))
-        {
-            return false;
-        }
-
-        // Look for the return 'bx lr' after the push
-        bxIndex = findNextBxLrAfter(nextPushIndex, 300);
-
-        if (bxIndex < 0)
-        {
-            return false;
-        }
-
-        if (existsLabelBetween(labelIndex, bxIndex))
-        {
-            return false;
-        }
-
-        return true;
+        return false;
     }
 
     /*
-     * Helper to find the next return instruction in the token stream.
+     * Helper to find the next return instruction (bx lr OR pop pc) in the token stream.
      */
-    private int findNextBxLrAfter(int fromIndexExclusive, int maxLookaheadTokens)
+    private int findNextReturnAfter(int fromIndexExclusive, int maxLookaheadTokens)
     {
-        int i;
-        int end;
+        int end = Math.min(tokens.size(), fromIndexExclusive + Math.max(1, maxLookaheadTokens));
 
-        end = Math.min(tokens.size(), fromIndexExclusive + Math.max(1, maxLookaheadTokens));
-
-        for (i = fromIndexExclusive + 1; i < end; i++)
+        for (int i = fromIndexExclusive + 1; i < end; i++)
         {
-            if (tokens.get(i).getType() == LinterLexer.BRANCHX)
+            if (tokens.get(i).getType() == LinterLexer.BRANCHX && isBxLrAtIndex(i))
             {
-                if (isBxLrAtIndex(i))
-                {
-                    return i;
-                }
+                return i;
+            }
+            if (tokens.get(i).getType() == LinterLexer.POP && isPopPcAtIndex(i))
+            {
+                return i;
             }
         }
 
         return -1;
+    }
+
+    /*
+     * Verifies if a POP instruction includes the Program Counter (PC).
+     */
+    private boolean isPopPcAtIndex(int popIndex)
+    {
+        int end = Math.min(tokens.size(), popIndex + 20);
+
+        for (int i = popIndex + 1; i < end; i++)
+        {
+            Token tok = tokens.get(i);
+
+            // If we hit a new label before finding 'pc', stop
+            if (tok.getType() == LinterLexer.LABEL_DEF)
+            {
+                return false;
+            }
+
+            if ("pc".equalsIgnoreCase(tok.getText()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /*
+     * Checks if the token immediately preceding the label is a dead-code instruction
+     * (meaning the label is an isolated entry point).
+     */
+    private boolean isFollowingDeadCode(int labelIndex)
+    {
+        for (int i = labelIndex - 1; i >= 0; i--)
+        {
+            Token t = tokens.get(i);
+
+            // Skip comments and whitespace
+            if (t.getChannel() != Token.DEFAULT_CHANNEL)
+            {
+                continue;
+            }
+
+            int type = t.getType();
+
+            // Skip directives and previous labels
+            if (type == LinterLexer.LABEL_DEF || type == LinterLexer.THUMBFUNC || type == LinterLexer.CONSTANT)
+            {
+                continue;
+            }
+
+            // If the last real instruction was a return or unconditional branch, we are following dead code
+            if (type == LinterLexer.BRANCHX && isBxLrAtIndex(i)) return true;
+            if (type == LinterLexer.POP && isPopPcAtIndex(i)) return true;
+            if (type == LinterLexer.BRANCH)
+            {
+                String text = t.getText().toLowerCase();
+                if (text.equals("b") || text.equals("bal")) return true;
+            }
+
+            // We hit a normal instruction, so control flow naturally falls into this label
+            return false;
+        }
+
+        return true; // Start of file
     }
 
     /*
